@@ -48,23 +48,38 @@ DATABASE_URL = os.environ.get('DATABASE_URL')
 
 async def init_db():
     """Создает таблицы в PostgreSQL, если их нет"""
-    conn = await asyncpg.connect(DATABASE_URL)
+    # Принудительно используем IPv4
+    import asyncpg
+    import socket
+    original_getaddrinfo = socket.getaddrinfo
+    
+    def ipv4_only_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
+        # Переопределяем, чтобы использовать только IPv4
+        return original_getaddrinfo(host, port, socket.AF_INET, type, proto, flags)
+    
+    socket.getaddrinfo = ipv4_only_getaddrinfo
+    
     try:
-        await conn.execute('''
-            CREATE TABLE IF NOT EXISTS room_leadership (
-                leader_id BIGINT PRIMARY KEY,
-                room_name TEXT UNIQUE,
-                role_id BIGINT,
-                text_channel_id BIGINT,
-                voice_channel_id BIGINT,
-                creation_date TEXT,
-                text_channel_last_rename TIMESTAMP,
-                voice_channel_last_rename TIMESTAMP
-            )
-        ''')
-        print("Таблица room_leadership создана/проверена")
+        conn = await asyncpg.connect(DATABASE_URL)
+        try:
+            await conn.execute('''
+                CREATE TABLE IF NOT EXISTS room_leadership (
+                    leader_id BIGINT PRIMARY KEY,
+                    room_name TEXT UNIQUE,
+                    role_id BIGINT,
+                    text_channel_id BIGINT,
+                    voice_channel_id BIGINT,
+                    creation_date TEXT,
+                    text_channel_last_rename TIMESTAMP,
+                    voice_channel_last_rename TIMESTAMP
+                )
+            ''')
+            print("Таблица room_leadership создана/проверена")
+        finally:
+            await conn.close()
     finally:
-        await conn.close()
+        # Возвращаем оригинальную функцию
+        socket.getaddrinfo = original_getaddrinfo
 
 async def get_db_connection():
     return await asyncpg.connect(DATABASE_URL)
