@@ -147,8 +147,7 @@ async def on_ready():
     await init_db()
     
     await bot.change_presence(
-        status=discord.Status.idle,
-        activity=discord.Game("Ожидание команд...")
+        status=discord.Status.invisible,
     )
     
     print(f'Bot is Up and Ready with PostgreSQL!')
