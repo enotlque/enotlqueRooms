@@ -60,7 +60,7 @@ def setup_commands(bot, cursor, CATEGORY_ID, conn, restricted_role_id):
             return
 
         # Проверка уникальности имени комнаты
-        cursor.execute('SELECT room_name FROM room_leadership WHERE room_name = ?', (комната,))
+        await cursor.execute('SELECT room_name FROM room_leadership WHERE room_name = $1', комната)
         if cursor.fetchone():
             await interaction.response.send_message(
                 embed=Embed(
@@ -72,7 +72,7 @@ def setup_commands(bot, cursor, CATEGORY_ID, conn, restricted_role_id):
             return
 
         # Проверка существующей комнаты у пользователя
-        cursor.execute('SELECT room_name FROM room_leadership WHERE leader_id = ?', (участник.id,))
+        await cursor.execute('SELECT room_name FROM room_leadership WHERE leader_id = $1', участник.id)
         if existing_room := cursor.fetchone():
             await interaction.response.send_message(
                 embed=Embed(
@@ -146,24 +146,16 @@ def setup_commands(bot, cursor, CATEGORY_ID, conn, restricted_role_id):
         await voice_channel.edit(overwrites=voice_overwrites)
 
         # Сохранение в базе данных
-        cursor.execute('''
-            INSERT INTO room_leadership (
-                leader_id, 
-                room_name, 
-                role_id, 
-                text_channel_id, 
-                voice_channel_id, 
-                creation_date
-            ) VALUES (?, ?, ?, ?, ?, ?)
-        ''', (
-            участник.id,
-            комната,
-            role.id,
-            text_channel.id,
-            voice_channel.id,
-            datetime.now().strftime('%d.%m.%Y')
-        ))
-        conn.commit()
+        await cursor.execute('''
+    INSERT INTO room_leadership (
+        leader_id, 
+        room_name, 
+        role_id, 
+        text_channel_id, 
+        voice_channel_id, 
+        creation_date
+    ) VALUES ($1, $2, $3, $4, $5, $6)
+''', участник.id, комната, role.id, text_channel.id, voice_channel.id, datetime.now().strftime('%d.%m.%Y'))
 
         # Выдача роли пользователю
         await участник.add_roles(role)
@@ -190,7 +182,7 @@ def setup_commands(bot, cursor, CATEGORY_ID, conn, restricted_role_id):
 
     async def list_rooms(interaction: Interaction, offset: int, new_message: bool = False):
         # Обновленный запрос для получения даты создания
-        cursor.execute('SELECT room_name, leader_id, creation_date FROM room_leadership LIMIT 5 OFFSET ?', (offset,))
+        await cursor.execute('SELECT room_name, leader_id, creation_date FROM room_leadership LIMIT 5 OFFSET $1', offset)
         rooms = cursor.fetchall()
 
         if not rooms:
@@ -201,7 +193,7 @@ def setup_commands(bot, cursor, CATEGORY_ID, conn, restricted_role_id):
                 await interaction.edit_original_response(embed=embed, view=None)
             return
 
-        cursor.execute('SELECT COUNT(*) FROM room_leadership')
+        await cursor.execute('SELECT COUNT(*) FROM room_leadership')
         total_rooms = cursor.fetchone()[0]
 
         total_pages = (total_rooms + 4) // 5  # Чтобы округлить вверх
@@ -278,18 +270,18 @@ def setup_commands(bot, cursor, CATEGORY_ID, conn, restricted_role_id):
             search_id = int(комната)
             
             # Пытаемся найти комнату по ID владельца или ID канала
-            cursor.execute('''
+            await cursor.execute('''
                 SELECT room_name, leader_id, role_id, text_channel_id, voice_channel_id, creation_date 
                 FROM room_leadership 
-                WHERE leader_id = ? OR text_channel_id = ? OR voice_channel_id = ?
-            ''', (search_id, search_id, search_id))
+                WHERE leader_id = $1 OR text_channel_id = $2 OR voice_channel_id = $3
+            ''', search_id, search_id, search_id)
         except ValueError:
             # Если не удалось преобразовать в число, ищем по имени комнаты
-            cursor.execute('''
+            await cursor.execute('''
                 SELECT room_name, leader_id, role_id, text_channel_id, voice_channel_id, creation_date 
                 FROM room_leadership 
-                WHERE room_name = ?
-            ''', (комната,))
+                WHERE room_name = $1
+            ''', комната)
 
         room = cursor.fetchone()
         
@@ -357,7 +349,7 @@ def setup_commands(bot, cursor, CATEGORY_ID, conn, restricted_role_id):
             )
             return
 
-        cursor.execute('SELECT room_name, text_channel_id, voice_channel_id, role_id FROM room_leadership WHERE leader_id = ?', (участник.id,))
+        await cursor.execute('SELECT room_name, text_channel_id, voice_channel_id, role_id FROM room_leadership WHERE leader_id = $1', участник.id)
         result = cursor.fetchone()
         if result is None:
             await interaction.response.send_message(
@@ -413,8 +405,7 @@ def setup_commands(bot, cursor, CATEGORY_ID, conn, restricted_role_id):
                     ephemeral=True
                 )
 
-        cursor.execute('DELETE FROM room_leadership WHERE leader_id = ?', (участник.id,))
-        conn.commit()
+        await cursor.execute('DELETE FROM room_leadership WHERE leader_id = $1', участник.id)
 
         embed = discord.Embed(
             description="Успешное удаление комнаты",
@@ -537,7 +528,7 @@ def setup_commands(bot, cursor, CATEGORY_ID, conn, restricted_role_id):
         user = interaction.user
         guild = interaction.guild
 
-        cursor.execute('SELECT room_name, role_id, creation_date, voice_channel_id FROM room_leadership WHERE leader_id = ?', (user.id,))
+        await cursor.execute('SELECT room_name, role_id, creation_date, voice_channel_id FROM room_leadership WHERE leader_id = $1', user.id)
         result = cursor.fetchone()
         if result is None:
             await interaction.response.send_message(embed=Embed(description="У вас нет своей комнаты для управления.", color=0xFF0000), ephemeral=True)
