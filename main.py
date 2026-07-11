@@ -145,6 +145,12 @@ conn = cursor
 @bot.event
 async def on_ready():
     await init_db()
+    
+    await bot.change_presence(
+        status=discord.Status.idle,
+        activity=discord.Game("Ожидание команд...")
+    )
+    
     print(f'Bot is Up and Ready with PostgreSQL!')
     try:
         synced = await bot.tree.sync()
