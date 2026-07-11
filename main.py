@@ -41,7 +41,7 @@ bot = commands.Bot(command_prefix='!', intents=intents)
 
 # ID вашей категории
 CATEGORY_ID = 1126627249001607179
-restricted_role_id = 1129742835487358989
+restricted_role_id = 1295482170374095049
 
 # === ПОДКЛЮЧЕНИЕ К POSTGRESQL ===
 DATABASE_URL = os.environ.get('DATABASE_URL')
