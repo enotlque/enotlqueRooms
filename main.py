@@ -60,7 +60,7 @@ async def init_db():
     socket.getaddrinfo = ipv4_only_getaddrinfo
     
     try:
-        conn = await asyncpg.connect(DATABASE_URL)
+        conn = await asyncpg.connect(DATABASE_URL, statement_cache_size=0)
         try:
             await conn.execute('''
                 CREATE TABLE IF NOT EXISTS room_leadership (
@@ -82,7 +82,7 @@ async def init_db():
         socket.getaddrinfo = original_getaddrinfo
 
 async def get_db_connection():
-    return await asyncpg.connect(DATABASE_URL)
+    return await asyncpg.connect(DATABASE_URL, statement_cache_size=0)
 
 # Функции для работы с БД (заменяют sqlite3)
 async def execute_query(query, *args):
@@ -147,7 +147,7 @@ async def on_ready():
     await init_db()
     
     await bot.change_presence(
-        status=discord.Status.invisible,
+        status=discord.Status.online,
     )
     
     print(f'Bot is Up and Ready with PostgreSQL!')
