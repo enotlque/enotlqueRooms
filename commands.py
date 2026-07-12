@@ -972,19 +972,19 @@ def setup_commands(bot, cursor, CATEGORY_ID, conn, restricted_role_id):
             self.add_item(InviteUserSelect(self))
 
     class InviteUserSelect(discord.ui.UserSelect):
-        def __init__(self, parent: "InviteSelectView"):
+        def __init__(self, select_owner_view: "InviteSelectView"):
             super().__init__(
                 placeholder="Выберите участников (до 10)",
                 min_values=1,
                 max_values=10
             )
-            self.parent = parent
+            self.select_owner_view = select_owner_view
 
         async def callback(self, interaction: Interaction):
             guild = interaction.guild
-            parent_view = self.parent.parent_view
-            owner = self.parent.owner
-            role = guild.get_role(self.parent.owner_role_id)
+            parent_view = self.select_owner_view.parent_view
+            owner = self.select_owner_view.owner
+            role = guild.get_role(self.select_owner_view.owner_role_id)
 
             if not role:
                 await interaction.response.edit_message(
@@ -1026,7 +1026,7 @@ def setup_commands(bot, cursor, CATEGORY_ID, conn, restricted_role_id):
                     owner=owner,
                     role=role,
                     parent_view=parent_view,
-                    owner_role_id=self.parent.owner_role_id,
+                    owner_role_id=self.select_owner_view.owner_role_id,
                     room_name=parent_view.room_name
                 )
 
@@ -1058,19 +1058,19 @@ def setup_commands(bot, cursor, CATEGORY_ID, conn, restricted_role_id):
             self.add_item(RemoveUserSelect(self))
 
     class RemoveUserSelect(discord.ui.UserSelect):
-        def __init__(self, parent: "RemoveSelectView"):
+        def __init__(self, select_owner_view: "RemoveSelectView"):
             super().__init__(
                 placeholder="Выберите участников (до 10)",
                 min_values=1,
                 max_values=10
             )
-            self.parent = parent
+            self.select_owner_view = select_owner_view
 
         async def callback(self, interaction: Interaction):
             guild = interaction.guild
-            parent_view = self.parent.parent_view
-            owner = self.parent.owner
-            role = guild.get_role(self.parent.owner_role_id)
+            parent_view = self.select_owner_view.parent_view
+            owner = self.select_owner_view.owner
+            role = guild.get_role(self.select_owner_view.owner_role_id)
 
             if not role:
                 await interaction.response.edit_message(
