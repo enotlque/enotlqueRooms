@@ -506,7 +506,7 @@ async def me(interaction: discord.Interaction, пользователь: discord
         
         return embed
 
-    def create_marriage_view(cursor, user):
+    async def create_marriage_view(cursor, user, interaction):
         marriage_view = ui.View()
         
         button_add_balance = ui.Button(label="Пополнить баланс", style=discord.ButtonStyle.green, emoji="<a:co11nn:1301173474751938641>")
@@ -550,7 +550,8 @@ async def me(interaction: discord.Interaction, пользователь: discord
                         await cursor.execute('UPDATE marriages SET marriage_balance = marriage_balance + $1 WHERE user1_id = $2 OR user2_id = $3', amount, user.id, user.id)
 
                         updated_marriage_embed = await create_marriage_embed(cursor, modal_interaction, user)
-                        await modal_interaction.response.edit_message(embed=updated_marriage_embed, view=create_marriage_view(cursor, user))
+                        updated_view = await create_marriage_view(cursor, user, modal_interaction)
+                        await modal_interaction.response.edit_message(embed=updated_marriage_embed, view=updated_view)
                         await modal_interaction.followup.send(
                             embed=discord.Embed(
                                 color=0x6e6e6e,
@@ -650,7 +651,7 @@ async def me(interaction: discord.Interaction, пользователь: discord
                     
                     if voice_channel_id:
                         try:
-                            voice_channel = await interaction.guild.fetch_channel(voice_channel_id)
+                            voice_channel = await i.guild.fetch_channel(voice_channel_id)
                             await voice_channel.delete()
                         except discord.NotFound:
                             pass
@@ -709,7 +710,8 @@ async def me(interaction: discord.Interaction, пользователь: discord
                 )
                 return
             updated_embed = await create_profile_embed(cursor, user, i.guild)
-            await i.response.edit_message(embed=updated_embed, view=view)
+            updated_view = await create_marriage_view(cursor, user, i)
+            await i.response.edit_message(embed=updated_embed, view=updated_view)
 
         button_back.callback = back_callback
         marriage_view.add_item(button_back)
