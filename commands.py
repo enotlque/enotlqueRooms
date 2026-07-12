@@ -147,15 +147,15 @@ def setup_commands(bot, cursor, CATEGORY_ID, conn, restricted_role_id):
 
         # Сохранение в базе данных
         await cursor.execute('''
-    INSERT INTO room_leadership (
-        leader_id, 
-        room_name, 
-        role_id, 
-        text_channel_id, 
-        voice_channel_id, 
-        creation_date
-    ) VALUES ($1, $2, $3, $4, $5, $6)
-''', участник.id, комната, role.id, text_channel.id, voice_channel.id, datetime.now().strftime('%d.%m.%Y'))
+            INSERT INTO room_leadership (
+                leader_id, 
+                room_name, 
+                role_id, 
+                text_channel_id, 
+                voice_channel_id, 
+                creation_date
+            ) VALUES ($1, $2, $3, $4, $5, $6)
+        ''', участник.id, комната, role.id, text_channel.id, voice_channel.id, datetime.now().strftime('%d.%m.%Y'))
 
         # Выдача роли пользователю
         await участник.add_roles(role)
@@ -421,108 +421,6 @@ def setup_commands(bot, cursor, CATEGORY_ID, conn, restricted_role_id):
 
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    # @room_group.command(name="search", description="Поиск владельца комнаты")
-    # @app_commands.describe(
-    #     параметр="ID голосовой/текстовой комнаты, либо название комнаты"
-    # )
-    # async def wholeader(interaction: discord.Interaction, параметр: str):
-    #     try:
-    #         guild = interaction.guild
-    #         user = interaction.user
-    #         room_name = None
-    #         channel_id = None
-
-    #         # Проверка на пустой параметр
-    #         if not параметр:
-    #             error_embed = discord.Embed(
-    #                 description="<:xxx:1299081147917008938> Пожалуйста, укажите ID комнаты или её название.",
-    #                 color=0x6e6e6e
-    #             )
-    #             await interaction.response.send_message(embed=error_embed, ephemeral=True)
-    #             return
-
-    #         # Попытка преобразовать параметр в ID канала
-    #         try:
-    #             channel_id = int(параметр)
-    #         except ValueError:
-    #             channel_id = None
-
-    #         # Выполнение SQL-запроса в зависимости от типа параметра
-    #         if channel_id is not None:
-    #             cursor.execute('''
-    #                 SELECT leader_id, room_name 
-    #                 FROM room_leadership 
-    #                 WHERE text_channel_id = ? OR voice_channel_id = ?
-    #             ''', (channel_id, channel_id))
-    #         else:
-    #             cursor.execute('''
-    #                 SELECT leader_id, room_name 
-    #                 FROM room_leadership 
-    #                 WHERE room_name = ?
-    #             ''', (параметр,))
-
-    #         result = cursor.fetchone()
-
-    #         # Если комната не найдена
-    #         if result is None:
-    #             error_embed = discord.Embed(
-    #                 description="<:xxx:1299081147917008938> Комната не найдена. Проверьте правильность введенных данных.",
-    #                 color=0x6e6e6e
-    #             )
-    #             await interaction.response.send_message(embed=error_embed, ephemeral=True)
-    #             return
-
-    #         # Данные из результата запроса
-    #         leader_id, room_name = result
-    #         leader = guild.get_member(leader_id)
-
-    #         # Формируем embed сообщение
-    #         embed = discord.Embed(color=0x6e6e6e)
-            
-    #         # Проверка наличия аватара у пользователя
-    #         avatar_url = user.avatar.url if user.avatar else user.default_avatar.url
-            
-    #         # Устанавливаем author с именем и иконкой вызывающего пользователя
-    #         embed.set_author(name=f"Поиск комнаты - {user.name}", icon_url=avatar_url)
-            
-    #         # Добавляем поля с информацией
-    #         embed.add_field(
-    #             name="Идентификатор", 
-    #             value=f"`{параметр}`", 
-    #             inline=True
-    #         )
-            
-    #         if leader:
-    #             embed.add_field(
-    #                 name="Владелец", 
-    #                 value=leader.mention, 
-    #                 inline=True
-    #             )
-    #         else:
-    #             embed.add_field(
-    #                 name="Владелец", 
-    #                 value=f"Пользователь с ID `{leader_id}`", 
-    #                 inline=True
-    #             )
-                
-    #         embed.add_field(
-    #             name="Комната", 
-    #             value=f"**{room_name}**", 
-    #             inline=True
-    #         )
-            
-    #         # Отправляем embed
-    #         await interaction.response.send_message(embed=embed)
-
-    #     except Exception as e:
-    #         # Обработка непредвиденных ошибок
-    #         error_embed = discord.Embed(
-    #             description="<:xxx:1299081147917008938> Произошла ошибка при выполнении команды. Попробуйте позже.",
-    #             color=0x6e6e6e
-    #         )
-    #         await interaction.response.send_message(embed=error_embed, ephemeral=True)
-    #         print(f"Error in wholeader command: {str(e)}")  # Логирование ошибки
-
     @room_group.command(name="manage", description="Управление личной комнатой")
     async def introom(interaction: discord.Interaction):
         user = interaction.user
@@ -668,6 +566,17 @@ def setup_commands(bot, cursor, CATEGORY_ID, conn, restricted_role_id):
             self.add_item(MembersListButton(owner_role_id, self))
             self.add_item(BackButton(self))
 
+        async def update_main_message(self):
+            if self.original_message is None:
+                return
+
+            embed = Embed(color=0x6e6e6e)
+            embed.set_author(name=f"Управление комнатой - {self.owner.display_name}", icon_url=self.owner.avatar.url)
+            embed.add_field(name="<:voice:1337103709150248992> Комната", value=self.room_name, inline=True)
+            embed.add_field(name="<:people:1337103698568020091> Участников", value=str(self.member_count), inline=True)
+
+            await self.original_message.edit(embed=embed, view=self)
+
     class MembersListButton(Button):
         def __init__(self, owner_role_id, parent_view):
             super().__init__(label="Участники", style=ButtonStyle.secondary, emoji="<:91221members:1337148934992429137>")
@@ -800,10 +709,9 @@ def setup_commands(bot, cursor, CATEGORY_ID, conn, restricted_role_id):
                 await interaction.response.send_message(embed=Embed(description="Вы не являетесь владельцем этой комнаты.", color=0xFF0000), ephemeral=True)
                 return
             
-            # Создаём embed с инструкцией
             embed = Embed(
                 title="👥 Пригласить участников",
-                description="Выберите участников в выпадающем списке и нажмите **'Пригласить'**.\n\n-# *Можно выбрать до 25 человек за раз*",
+                description="Выберите участников в выпадающем списке. Можно выбрать до 10 человек за раз.\n\n-# *Начните печатать для поиска по нику*",
                 color=0x6e6e6e
             )
             embed.set_footer(text="У вас есть 60 секунд на выбор")
@@ -827,7 +735,7 @@ def setup_commands(bot, cursor, CATEGORY_ID, conn, restricted_role_id):
             
             embed = Embed(
                 title="👥 Исключить участников",
-                description="Выберите участников в выпадающем списке и нажмите **'Исключить'**.\n\n-# *Можно выбрать до 25 человек за раз*",
+                description="Выберите участников в выпадающем списке. Можно выбрать до 10 человек за раз.\n\n-# *Начните печатать для поиска по нику*",
                 color=0x6e6e6e
             )
             embed.set_footer(text="У вас есть 60 секунд на выбор")
@@ -837,6 +745,303 @@ def setup_commands(bot, cursor, CATEGORY_ID, conn, restricted_role_id):
 
         def is_owner(self, interaction: Interaction):
             return any(role.id == self.owner_role_id for role in interaction.user.roles)
+
+    class InviteSelectView(View):
+        def __init__(self, owner_role_id, parent_view, guild):
+            super().__init__(timeout=120)
+            self.owner_role_id = owner_role_id
+            self.parent_view = parent_view
+            self.guild = guild
+            self.current_page = 0
+            self.items_per_page = 25
+            
+            role = guild.get_role(owner_role_id)
+            self.members = [m for m in guild.members if not m.bot and (role not in m.roles)]
+            
+            if not self.members:
+                self.add_item(Button(label="Нет доступных участников", style=ButtonStyle.secondary, disabled=True))
+                return
+            
+            self.update_select()
+            
+            if len(self.members) > self.items_per_page:
+                prev_button = Button(label="◀ Назад", style=ButtonStyle.secondary)
+                prev_button.callback = self.prev_page
+                self.add_item(prev_button)
+                
+                next_button = Button(label="Вперед ▶", style=ButtonStyle.secondary)
+                next_button.callback = self.next_page
+                self.add_item(next_button)
+            
+            cancel_button = Button(label="Отмена", style=ButtonStyle.danger)
+            cancel_button.callback = self.cancel_callback
+            self.add_item(cancel_button)
+        
+        def update_select(self):
+            for item in self.children[:]:
+                if isinstance(item, discord.ui.Select):
+                    self.remove_item(item)
+            
+            start = self.current_page * self.items_per_page
+            end = min(start + self.items_per_page, len(self.members))
+            page_members = self.members[start:end]
+            
+            select = discord.ui.Select(
+                placeholder=f"Выберите участников для приглашения (стр. {self.current_page + 1})",
+                min_values=1,
+                max_values=min(10, len(page_members)),
+                options=[
+                    discord.SelectOption(
+                        label=member.display_name[:50],
+                        value=str(member.id),
+                        description=f"#{member.name}" if member.name else ""
+                    )
+                    for member in page_members
+                ]
+            )
+            select.callback = self.select_callback
+            self.add_item(select)
+        
+        async def prev_page(self, interaction: Interaction):
+            if self.current_page > 0:
+                self.current_page -= 1
+                self.update_select()
+                embed = Embed(
+                    title="👥 Пригласить участников",
+                    description=f"Страница {self.current_page + 1} из {((len(self.members) - 1) // self.items_per_page) + 1}\n\nВыберите участников в выпадающем списке и нажмите **'Пригласить'**.\n\n-# *Можно выбрать до 10 человек за раз*",
+                    color=0x6e6e6e
+                )
+                await interaction.response.edit_message(embed=embed, view=self)
+            else:
+                await interaction.response.send_message("Вы на первой странице.", ephemeral=True)
+        
+        async def next_page(self, interaction: Interaction):
+            max_pages = ((len(self.members) - 1) // self.items_per_page) + 1
+            if self.current_page < max_pages - 1:
+                self.current_page += 1
+                self.update_select()
+                embed = Embed(
+                    title="👥 Пригласить участников",
+                    description=f"Страница {self.current_page + 1} из {max_pages}\n\nВыберите участников в выпадающем списке и нажмите **'Пригласить'**.\n\n-# *Можно выбрать до 10 человек за раз*",
+                    color=0x6e6e6e
+                )
+                await interaction.response.edit_message(embed=embed, view=self)
+            else:
+                await interaction.response.send_message("Вы на последней странице.", ephemeral=True)
+        
+        async def select_callback(self, interaction: Interaction):
+            selected_members = []
+            for value in interaction.data['values']:
+                member = self.guild.get_member(int(value))
+                if member:
+                    selected_members.append(member)
+            
+            if not selected_members:
+                await interaction.response.send_message(
+                    embed=Embed(description="Вы не выбрали ни одного участника.", color=0xFF0000),
+                    ephemeral=True
+                )
+                return
+            
+            if len(selected_members) > 10:
+                await interaction.response.send_message(
+                    embed=Embed(description="⚠️ Нельзя приглашать больше 10 человек за раз!", color=0xFF0000),
+                    ephemeral=True
+                )
+                return
+            
+            role = self.guild.get_role(self.owner_role_id)
+            invited_list = []
+            already_have_role = []
+            
+            for member in selected_members:
+                if role in member.roles:
+                    already_have_role.append(member.display_name)
+                else:
+                    invite_embed = Embed(
+                        title=f"Комната {self.parent_view.room_name}",
+                        description=f"Приглашение пользователя {member.mention}\n\n-# *20с. на действие*",
+                        color=0x6e6e6e
+                    )
+                    invite_embed.set_thumbnail(url=member.avatar.url if member.avatar else member.default_avatar.url)
+                    
+                    invite_view = InviteConfirmView(
+                        member=member,
+                        owner=self.parent_view.owner,
+                        role=role,
+                        parent_view=self.parent_view,
+                        owner_role_id=self.owner_role_id,
+                        room_name=self.parent_view.room_name
+                    )
+                    
+                    msg = await interaction.channel.send(embed=invite_embed, view=invite_view)
+                    invite_view.message = msg
+                    invited_list.append(member.display_name)
+            
+            result_embed = Embed(
+                description=f"✅ Приглашения отправлены: {len(invited_list)} пользователям",
+                color=0x00FF00
+            )
+            if already_have_role:
+                result_embed.add_field(
+                    name="⚠️ Уже имеют роль",
+                    value=", ".join(already_have_role[:10]) + (f" и ещё {len(already_have_role) - 10}..." if len(already_have_role) > 10 else ""),
+                    inline=False
+                )
+            
+            await interaction.response.send_message(embed=result_embed, ephemeral=True)
+            await self.parent_view.update_main_message()
+            self.stop()
+            await interaction.message.delete()
+        
+        async def cancel_callback(self, interaction: Interaction):
+            self.stop()
+            await interaction.message.delete()
+            await interaction.response.send_message(
+                embed=Embed(description="Действие отменено.", color=0xFF0000),
+                ephemeral=True
+            )
+
+    class RemoveSelectView(View):
+        def __init__(self, owner_role_id, parent_view, guild):
+            super().__init__(timeout=120)
+            self.owner_role_id = owner_role_id
+            self.parent_view = parent_view
+            self.guild = guild
+            self.current_page = 0
+            self.items_per_page = 25
+            
+            role = guild.get_role(owner_role_id)
+            self.members = [m for m in guild.members if role in m.roles and m.id != parent_view.owner.id]
+            
+            if not self.members:
+                self.add_item(Button(label="Нет участников для удаления", style=ButtonStyle.secondary, disabled=True))
+                return
+            
+            self.update_select()
+            
+            if len(self.members) > self.items_per_page:
+                prev_button = Button(label="◀ Назад", style=ButtonStyle.secondary)
+                prev_button.callback = self.prev_page
+                self.add_item(prev_button)
+                
+                next_button = Button(label="Вперед ▶", style=ButtonStyle.secondary)
+                next_button.callback = self.next_page
+                self.add_item(next_button)
+            
+            cancel_button = Button(label="Отмена", style=ButtonStyle.danger)
+            cancel_button.callback = self.cancel_callback
+            self.add_item(cancel_button)
+        
+        def update_select(self):
+            for item in self.children[:]:
+                if isinstance(item, discord.ui.Select):
+                    self.remove_item(item)
+            
+            start = self.current_page * self.items_per_page
+            end = min(start + self.items_per_page, len(self.members))
+            page_members = self.members[start:end]
+            
+            select = discord.ui.Select(
+                placeholder=f"Выберите участников для исключения (стр. {self.current_page + 1})",
+                min_values=1,
+                max_values=min(10, len(page_members)),
+                options=[
+                    discord.SelectOption(
+                        label=member.display_name[:50],
+                        value=str(member.id),
+                        description=f"#{member.name}" if member.name else ""
+                    )
+                    for member in page_members
+                ]
+            )
+            select.callback = self.select_callback
+            self.add_item(select)
+        
+        async def prev_page(self, interaction: Interaction):
+            if self.current_page > 0:
+                self.current_page -= 1
+                self.update_select()
+                embed = Embed(
+                    title="👥 Исключить участников",
+                    description=f"Страница {self.current_page + 1} из {((len(self.members) - 1) // self.items_per_page) + 1}\n\nВыберите участников в выпадающем списке.",
+                    color=0x6e6e6e
+                )
+                await interaction.response.edit_message(embed=embed, view=self)
+            else:
+                await interaction.response.send_message("Вы на первой странице.", ephemeral=True)
+        
+        async def next_page(self, interaction: Interaction):
+            max_pages = ((len(self.members) - 1) // self.items_per_page) + 1
+            if self.current_page < max_pages - 1:
+                self.current_page += 1
+                self.update_select()
+                embed = Embed(
+                    title="👥 Исключить участников",
+                    description=f"Страница {self.current_page + 1} из {max_pages}\n\nВыберите участников в выпадающем списке.",
+                    color=0x6e6e6e
+                )
+                await interaction.response.edit_message(embed=embed, view=self)
+            else:
+                await interaction.response.send_message("Вы на последней странице.", ephemeral=True)
+        
+        async def select_callback(self, interaction: Interaction):
+            selected_members = []
+            for value in interaction.data['values']:
+                member = self.guild.get_member(int(value))
+                if member:
+                    selected_members.append(member)
+            
+            if not selected_members:
+                await interaction.response.send_message(
+                    embed=Embed(description="Вы не выбрали ни одного участника.", color=0xFF0000),
+                    ephemeral=True
+                )
+                return
+            
+            if len(selected_members) > 10:
+                await interaction.response.send_message(
+                    embed=Embed(description="⚠️ Нельзя исключать больше 10 человек за раз!", color=0xFF0000),
+                    ephemeral=True
+                )
+                return
+            
+            role = self.guild.get_role(self.owner_role_id)
+            removed_list = []
+            not_in_role_list = []
+            
+            for member in selected_members:
+                if role not in member.roles:
+                    not_in_role_list.append(member.display_name)
+                else:
+                    await member.remove_roles(role)
+                    removed_list.append(member.display_name)
+            
+            self.parent_view.member_count -= len(removed_list)
+            await self.parent_view.update_main_message()
+            
+            result_embed = Embed(
+                description=f"✅ Исключено: {len(removed_list)} пользователей",
+                color=0x00FF00
+            )
+            if not_in_role_list:
+                result_embed.add_field(
+                    name="⚠️ Уже не имеют роль",
+                    value=", ".join(not_in_role_list[:10]) + (f" и ещё {len(not_in_role_list) - 10}..." if len(not_in_role_list) > 10 else ""),
+                    inline=False
+                )
+            
+            await interaction.response.send_message(embed=result_embed, ephemeral=True)
+            self.stop()
+            await interaction.message.delete()
+        
+        async def cancel_callback(self, interaction: Interaction):
+            self.stop()
+            await interaction.message.delete()
+            await interaction.response.send_message(
+                embed=Embed(description="Действие отменено.", color=0xFF0000),
+                ephemeral=True
+            )
 
     class OpenChannelButton(Button):
         def __init__(self, owner_role_id, owner, room_name, member_count, voice_channel, original_message):
@@ -947,192 +1152,6 @@ def setup_commands(bot, cursor, CATEGORY_ID, conn, restricted_role_id):
         def create_new_view(self, is_channel_open, interaction):
             return ManageRoomView(self.owner_role_id, self.owner, self.room_name, self.member_count, self.voice_channel, is_channel_open, interaction)
 
-    class InviteSelectView(View):
-        def __init__(self, owner_role_id, parent_view, guild):
-            super().__init__(timeout=60)
-            self.owner_role_id = owner_role_id
-            self.parent_view = parent_view
-            self.guild = guild
-            
-            role = guild.get_role(owner_role_id)
-            members = [m for m in guild.members if not m.bot and (role not in m.roles)]
-            
-            if not members:
-                self.add_item(Button(label="Нет доступных участников", style=ButtonStyle.secondary, disabled=True))
-                return
-            
-            select = discord.ui.Select(
-                placeholder="Выберите участников для приглашения...",
-                min_values=1,
-                max_values=min(25, len(members)),
-                options=[
-                    discord.SelectOption(
-                        label=member.display_name[:50],
-                        value=str(member.id),
-                        description=f"#{member.name}" if member.name else "Без имени"
-                    )
-                    for member in members[:25]
-                ]
-            )
-            select.callback = self.select_callback
-            self.add_item(select)
-            
-            cancel_button = Button(label="Отмена", style=ButtonStyle.danger)
-            cancel_button.callback = self.cancel_callback
-            self.add_item(cancel_button)
-            
-        async def select_callback(self, interaction: Interaction):
-            selected_members = []
-            for value in interaction.data['values']:
-                member = self.guild.get_member(int(value))
-                if member:
-                    selected_members.append(member)
-            
-            if not selected_members:
-                await interaction.response.send_message(
-                    embed=Embed(description="Вы не выбрали ни одного участника.", color=0xFF0000),
-                    ephemeral=True
-                )
-                return
-            
-            role = self.guild.get_role(self.owner_role_id)
-            invited_list = []
-            already_have_role = []
-            
-            for member in selected_members:
-                if role in member.roles:
-                    already_have_role.append(member.display_name)
-                else:
-                    invite_embed = Embed(
-                        title=f"Комната {self.parent_view.room_name}",
-                        description=f"Приглашение пользователя {member.mention}\n\n-# *20с. на действие*",
-                        color=0x6e6e6e
-                    )
-                    invite_embed.set_thumbnail(url=member.avatar.url if member.avatar else member.default_avatar.url)
-                    
-                    invite_view = InviteConfirmView(
-                        member=member,
-                        owner=self.parent_view.owner,
-                        role=role,
-                        parent_view=self.parent_view,
-                        owner_role_id=self.owner_role_id,
-                        room_name=self.parent_view.room_name
-                    )
-                    
-                    await interaction.channel.send(embed=invite_embed, view=invite_view)
-                    invite_view.message = await interaction.original_response()
-                    invited_list.append(member.display_name)
-            
-            result_embed = Embed(
-                description=f"✅ Приглашения отправлены: {len(invited_list)} пользователям",
-                color=0x00FF00
-            )
-            if already_have_role:
-                result_embed.add_field(
-                    name="⚠️ Уже имеют роль",
-                    value=", ".join(already_have_role[:10]) + (f" и ещё {len(already_have_role) - 10}..." if len(already_have_role) > 10 else ""),
-                    inline=False
-                )
-            
-            await interaction.response.send_message(embed=result_embed, ephemeral=True)
-            await self.parent_view.update_main_message()
-            self.stop()
-            await interaction.message.delete()
-        
-        async def cancel_callback(self, interaction: Interaction):
-            self.stop()
-            await interaction.message.delete()
-            await interaction.response.send_message(
-                embed=Embed(description="Действие отменено.", color=0xFF0000),
-                ephemeral=True
-            )
-
-    class RemoveSelectView(View):
-        def __init__(self, owner_role_id, parent_view, guild):
-            super().__init__(timeout=60)
-            self.owner_role_id = owner_role_id
-            self.parent_view = parent_view
-            self.guild = guild
-            
-            role = guild.get_role(owner_role_id)
-            members = [m for m in guild.members if role in m.roles and m.id != parent_view.owner.id]
-            
-            if not members:
-                self.add_item(Button(label="Нет участников для удаления", style=ButtonStyle.secondary, disabled=True))
-                return
-            
-            select = discord.ui.Select(
-                placeholder="Выберите участников для исключения...",
-                min_values=1,
-                max_values=min(25, len(members)),
-                options=[
-                    discord.SelectOption(
-                        label=member.display_name[:50],
-                        value=str(member.id),
-                        description=f"#{member.name}" if member.name else "Без имени"
-                    )
-                    for member in members[:25]
-                ]
-            )
-            select.callback = self.select_callback
-            self.add_item(select)
-            
-            cancel_button = Button(label="Отмена", style=ButtonStyle.danger)
-            cancel_button.callback = self.cancel_callback
-            self.add_item(cancel_button)
-            
-        async def select_callback(self, interaction: Interaction):
-            selected_members = []
-            for value in interaction.data['values']:
-                member = self.guild.get_member(int(value))
-                if member:
-                    selected_members.append(member)
-            
-            if not selected_members:
-                await interaction.response.send_message(
-                    embed=Embed(description="Вы не выбрали ни одного участника.", color=0xFF0000),
-                    ephemeral=True
-                )
-                return
-            
-            role = self.guild.get_role(self.owner_role_id)
-            removed_list = []
-            not_in_role_list = []
-            
-            for member in selected_members:
-                if role not in member.roles:
-                    not_in_role_list.append(member.display_name)
-                else:
-                    await member.remove_roles(role)
-                    removed_list.append(member.display_name)
-            
-            self.parent_view.member_count -= len(removed_list)
-            await self.parent_view.update_main_message()
-            
-            result_embed = Embed(
-                description=f"✅ Исключено: {len(removed_list)} пользователей",
-                color=0x00FF00
-            )
-            if not_in_role_list:
-                result_embed.add_field(
-                    name="⚠️ Уже не имеют роль",
-                    value=", ".join(not_in_role_list[:10]) + (f" и ещё {len(not_in_role_list) - 10}..." if len(not_in_role_list) > 10 else ""),
-                    inline=False
-                )
-            
-            await interaction.response.send_message(embed=result_embed, ephemeral=True)
-            self.stop()
-            await interaction.message.delete()
-        
-        async def cancel_callback(self, interaction: Interaction):
-            self.stop()
-            await interaction.message.delete()
-            await interaction.response.send_message(
-                embed=Embed(description="Действие отменено.", color=0xFF0000),
-                ephemeral=True
-            )
-
-    # === НАЧАЛО ДОБАВЛЕНИЯ НОВОГО КЛАССА ===
     class InviteConfirmView(View):
         def __init__(self, member, owner, role, parent_view, owner_role_id, room_name):
             super().__init__(timeout=20)
@@ -1145,16 +1164,25 @@ def setup_commands(bot, cursor, CATEGORY_ID, conn, restricted_role_id):
             self.message = None
 
         async def on_timeout(self):
-            # Удаляем сообщение после таймаута
             if self.message:
                 try:
                     await self.message.delete()
                 except:
                     pass
 
+        async def update_main_message(self):
+            if self.parent_view.original_message is None:
+                return
+
+            embed = Embed(color=0x6e6e6e)
+            embed.set_author(name=f"Управление комнатой - {self.parent_view.owner.display_name}", icon_url=self.parent_view.owner.avatar.url)
+            embed.add_field(name="<:voice:1337103709150248992> Комната", value=self.parent_view.room_name, inline=True)
+            embed.add_field(name="<:people:1337103698568020091> Участников", value=str(self.parent_view.member_count), inline=True)
+
+            await self.parent_view.original_message.edit(embed=embed, view=self.parent_view)
+
         @discord.ui.button(label="Да", style=ButtonStyle.success, emoji="<:checkmark:1299081136013709352>")
         async def accept_button(self, interaction: Interaction, button: Button):
-            # Только приглашенный пользователь может принять
             if interaction.user.id != self.member.id:
                 await interaction.response.send_message(
                     embed=Embed(description="Только приглашенный пользователь может принять приглашение.", color=0xFF0000),
@@ -1162,21 +1190,17 @@ def setup_commands(bot, cursor, CATEGORY_ID, conn, restricted_role_id):
                 )
                 return
 
-            # Выдаем роль
             await self.member.add_roles(self.role)
             
-            # Обновляем счетчик участников
             self.parent_view.member_count += 1
             await self.update_main_message()
             
-            # Отправляем подтверждение
             await interaction.response.send_message(
                 embed=Embed(description="", color=0x6e6e6e)
                 .set_author(name=f"Вы вступили в комнату - {self.room_name}", icon_url=self.member.avatar.url if self.member.avatar else self.member.default_avatar.url),
                 ephemeral=True
             )
             
-            # Удаляем сообщение с приглашением
             try:
                 await interaction.message.delete()
             except:
@@ -1184,7 +1208,6 @@ def setup_commands(bot, cursor, CATEGORY_ID, conn, restricted_role_id):
 
         @discord.ui.button(label="Нет", style=ButtonStyle.danger, emoji="<:xxx:1299081147917008938>")
         async def decline_button(self, interaction: Interaction, button: Button):
-            # Приглашенный пользователь или владелец комнаты могут отклонить
             if interaction.user.id != self.member.id and interaction.user.id != self.owner.id:
                 await interaction.response.send_message(
                     embed=Embed(description="У вас нет прав на это действие.", color=0xFF0000),
@@ -1192,10 +1215,8 @@ def setup_commands(bot, cursor, CATEGORY_ID, conn, restricted_role_id):
                 )
                 return
 
-            # Останавливаем таймер
             self.stop()
 
-            # Определяем кто отклонил
             if interaction.user.id == self.owner.id:
                 decline_embed = Embed(
                     title=f"Комната {self.room_name}",
@@ -1212,22 +1233,10 @@ def setup_commands(bot, cursor, CATEGORY_ID, conn, restricted_role_id):
             decline_embed.set_thumbnail(url=self.member.avatar.url if self.member.avatar else self.member.default_avatar.url)
             await interaction.response.edit_message(embed=decline_embed, view=None)
             
-            # Удаляем сообщение через 3 секунды
             await asyncio.sleep(3)
             try:
                 await interaction.message.delete()
             except:
                 pass
-
-        async def update_main_message(self):
-            if self.parent_view.original_message is None:
-                return
-
-            embed = Embed(color=0x6e6e6e)
-            embed.set_author(name=f"Управление комнатой - {self.parent_view.owner.display_name}", icon_url=self.parent_view.owner.avatar.url)
-            embed.add_field(name="<:voice:1337103709150248992> Комната", value=self.parent_view.room_name, inline=True)
-            embed.add_field(name="<:people:1337103698568020091> Участников", value=str(self.parent_view.member_count), inline=True)
-
-            await self.parent_view.original_message.edit(embed=embed, view=self.parent_view)
 
     bot.tree.add_command(room_group)
