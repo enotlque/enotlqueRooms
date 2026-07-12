@@ -626,7 +626,7 @@ def setup_commands(bot, cursor, CATEGORY_ID, conn, restricted_role_id):
 
     class BackButton(Button):
         def __init__(self, parent_view):
-            super().__init__(label="Назад", style=ButtonStyle.secondary, emoji="<:61991right:1337148887299002371>")
+            super().__init__(label="Назад", style=ButtonStyle.secondary, emoji="<:61991right:1337148887299002371>", row=1)
             self.parent_view = parent_view
 
         async def callback(self, interaction: Interaction):
@@ -686,7 +686,7 @@ def setup_commands(bot, cursor, CATEGORY_ID, conn, restricted_role_id):
 
     class MembersListButton(Button):
         def __init__(self, owner_role_id, parent_view):
-            super().__init__(label="Участники", style=ButtonStyle.secondary, emoji="<:91221members:1337148934992429137>")
+            super().__init__(label="Участники", style=ButtonStyle.secondary, emoji="<:91221members:1337148934992429137>", row=1)
             self.owner_role_id = owner_role_id
             self.parent_view = parent_view
 
@@ -807,7 +807,7 @@ def setup_commands(bot, cursor, CATEGORY_ID, conn, restricted_role_id):
 
     class InviteButton(Button):
         def __init__(self, owner_role_id, parent_view):
-            super().__init__(label="Пригласить", style=ButtonStyle.secondary, emoji="<:checkmark:1299081136013709352>")
+            super().__init__(label="Пригласить", style=ButtonStyle.secondary, emoji="<:checkmark:1299081136013709352>", row=0)
             self.owner_role_id = owner_role_id
             self.parent_view = parent_view
 
@@ -833,7 +833,7 @@ def setup_commands(bot, cursor, CATEGORY_ID, conn, restricted_role_id):
 
     class RemoveButton(Button):
         def __init__(self, owner_role_id, parent_view):
-            super().__init__(label="Исключить", style=ButtonStyle.secondary, emoji="<:xxx:1299081147917008938>")
+            super().__init__(label="Исключить", style=ButtonStyle.secondary, emoji="<:xxx:1299081147917008938>", row=0)
             self.owner_role_id = owner_role_id
             self.parent_view = parent_view
 
@@ -859,7 +859,7 @@ def setup_commands(bot, cursor, CATEGORY_ID, conn, restricted_role_id):
 
     class OpenChannelButton(Button):
         def __init__(self, owner_role_id, owner, room_name, member_count, voice_channel, original_message):
-            super().__init__(label="Закрыта", style=ButtonStyle.secondary, emoji="<:turnon:1337103564715200572>")
+            super().__init__(label="Закрыта", style=ButtonStyle.secondary, emoji="<:turnon:1337103564715200572>", row=1)
             self.owner_role_id = owner_role_id
             self.owner = owner
             self.room_name = room_name
@@ -912,7 +912,7 @@ def setup_commands(bot, cursor, CATEGORY_ID, conn, restricted_role_id):
 
     class CloseChannelButton(Button):
         def __init__(self, owner_role_id, owner, room_name, member_count, voice_channel, original_message):
-            super().__init__(label="Открыта", style=ButtonStyle.secondary, emoji="<:turnoff:1337103551255543839>")
+            super().__init__(label="Открыта", style=ButtonStyle.secondary, emoji="<:turnoff:1337103551255543839>", row=1)
             self.owner_role_id = owner_role_id
             self.owner = owner
             self.room_name = room_name
