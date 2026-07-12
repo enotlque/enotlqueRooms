@@ -110,7 +110,18 @@ async def init_db():
                 )
             ''')
             print("✅ Таблица roles создана/проверена")
-            
+
+            # Таблица привязок для умного лобби
+            await conn.execute('''
+                CREATE TABLE IF NOT EXISTS lobby_bindings (
+                    user_id BIGINT PRIMARY KEY,
+                    voice_channel_id BIGINT,
+                    bound_by BIGINT,
+                    bound_at TEXT
+                )
+            ''')
+            print("✅ Таблица lobby_bindings создана/проверена")
+
         finally:
             await conn.close()
     finally:
@@ -150,6 +161,8 @@ conn = cursor
 
 # === ИМПОРТ И ПЕРЕДАЧА CURSOR В ЭКОНОМИЧЕСКИЙ МОДУЛЬ ===
 from commands_room import setup_room_commands
+from commands_admin import setup_admin_commands
+from commands_lobby import setup_lobby_commands
 import commands_economy
 commands_economy.set_cursor(cursor)
 
@@ -171,6 +184,8 @@ bot.tree.add_command(marry)
 bot.tree.add_command(withrole)
 
 setup_room_commands(bot, cursor, CATEGORY_ID, restricted_role_id)
+setup_admin_commands(bot)
+setup_lobby_commands(bot, cursor)
 
 @bot.event
 async def on_ready():
