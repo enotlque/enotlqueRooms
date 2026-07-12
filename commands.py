@@ -40,6 +40,10 @@ def setup_commands(bot, cursor, CATEGORY_ID, conn, restricted_role_id):
 
         await parent_view.original_message.edit(embed=embed, view=parent_view)
 
+    # owner_role_id -> set(member_id) с активным (ещё не принятым/не отклонённым/не истекшим) приглашением
+    MAX_PENDING_INVITES = 10
+    pending_invites: dict = {}
+
     @room_group.command(name="create", description="Создание приватной комнаты [Только для Администрации]")
     @app_commands.describe(
         участник="Участник, которому будет принадлежать комната",
@@ -995,6 +999,9 @@ def setup_commands(bot, cursor, CATEGORY_ID, conn, restricted_role_id):
 
             await interaction.response.defer(ephemeral=True)
 
+            pending_set = pending_invites.setdefault(role.id, set())
+            available_slots = MAX_PENDING_INVITES - len(pending_set)
+
             invited = []
             skipped = []
 
@@ -1013,6 +1020,12 @@ def setup_commands(bot, cursor, CATEGORY_ID, conn, restricted_role_id):
                 if role in member.roles:
                     skipped.append(f"{member.mention} — уже состоит в комнате")
                     continue
+                if member.id in pending_set:
+                    skipped.append(f"{member.mention} — уже есть активное приглашение")
+                    continue
+                if available_slots <= 0:
+                    skipped.append(f"{member.mention} — достигнут лимит активных приглашений ({MAX_PENDING_INVITES})")
+                    continue
 
                 invite_embed = Embed(
                     title=f"Комната {parent_view.room_name}",
@@ -1027,13 +1040,16 @@ def setup_commands(bot, cursor, CATEGORY_ID, conn, restricted_role_id):
                     role=role,
                     parent_view=parent_view,
                     owner_role_id=self.select_owner_view.owner_role_id,
-                    room_name=parent_view.room_name
+                    room_name=parent_view.room_name,
+                    pending_set=pending_set
                 )
 
                 try:
                     msg = await interaction.channel.send(embed=invite_embed, view=invite_view)
                     invite_view.message = msg
                     invited.append(member.mention)
+                    pending_set.add(member.id)
+                    available_slots -= 1
                 except Exception:
                     skipped.append(f"{member.mention} — ошибка отправки приглашения")
 
@@ -1043,6 +1059,7 @@ def setup_commands(bot, cursor, CATEGORY_ID, conn, restricted_role_id):
                 summary.add_field(name="<:checkmark:1299081136013709352> Приглашены", value="\n".join(invited), inline=False)
             if skipped:
                 summary.add_field(name="<:xxx:1299081147917008938> Пропущены", value="\n".join(skipped), inline=False)
+            summary.set_footer(text=f"Активных приглашений: {len(pending_set)}/{MAX_PENDING_INVITES}")
             if not invited and not skipped:
                 summary.description = "Никто не был выбран."
 
@@ -1121,7 +1138,7 @@ def setup_commands(bot, cursor, CATEGORY_ID, conn, restricted_role_id):
     # === НАЧАЛО ДОБАВЛЕНИЯ НОВОГО КЛАССА ===
     # === НАЧАЛО ДОБАВЛЕНИЯ НОВОГО КЛАССА ===
     class InviteConfirmView(View):
-        def __init__(self, member, owner, role, parent_view, owner_role_id, room_name):
+        def __init__(self, member, owner, role, parent_view, owner_role_id, room_name, pending_set=None):
             super().__init__(timeout=20)
             self.member = member
             self.owner = owner
@@ -1130,8 +1147,13 @@ def setup_commands(bot, cursor, CATEGORY_ID, conn, restricted_role_id):
             self.owner_role_id = owner_role_id
             self.room_name = room_name
             self.message = None
+            self.pending_set = pending_set
 
         async def on_timeout(self):
+            # Освобождаем слот активного приглашения
+            if self.pending_set is not None:
+                self.pending_set.discard(self.member.id)
+
             # Удаляем сообщение после таймаута
             if self.message:
                 try:
@@ -1148,6 +1170,10 @@ def setup_commands(bot, cursor, CATEGORY_ID, conn, restricted_role_id):
                     ephemeral=True
                 )
                 return
+
+            # Освобождаем слот активного приглашения
+            if self.pending_set is not None:
+                self.pending_set.discard(self.member.id)
 
             # Выдаем роль
             await self.member.add_roles(self.role)
@@ -1181,6 +1207,10 @@ def setup_commands(bot, cursor, CATEGORY_ID, conn, restricted_role_id):
 
             # Останавливаем таймер
             self.stop()
+
+            # Освобождаем слот активного приглашения
+            if self.pending_set is not None:
+                self.pending_set.discard(self.member.id)
 
             # Определяем кто отклонил
             if interaction.user.id == self.owner.id:
