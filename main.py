@@ -20,11 +20,9 @@ def run_web_server():
     port = int(os.environ.get('PORT', 10000))
     app.run(host='0.0.0.0', port=port)
 
-# Запускаем веб-сервер в отдельном потоке
 threading.Thread(target=run_web_server, daemon=True).start()
 # === КОНЕЦ БЛОКА ===
 
-# Создаем объект intents и устанавливаем нужные параметры
 intents = discord.Intents.default()
 intents.members = True
 intents.message_content = True
@@ -33,19 +31,16 @@ intents.guild_messages = True
 intents.typing = False
 intents.presences = False
 intents.reactions = True
-intents.voice_states = True  # Включаем для голосовых каналов
+intents.voice_states = True
 
 bot = commands.Bot(command_prefix='!', intents=intents)
 
-# ID вашей категории для комнат
 CATEGORY_ID = 1126627249001607179
 restricted_role_id = 1295482170374095049
 
-# === ПОДКЛЮЧЕНИЕ К POSTGRESQL ===
 DATABASE_URL = os.environ.get('DATABASE_URL')
 
 async def init_db():
-    """Создает таблицы в PostgreSQL, если их нет"""
     import socket
     original_getaddrinfo = socket.getaddrinfo
     
@@ -57,7 +52,7 @@ async def init_db():
     try:
         conn = await asyncpg.connect(DATABASE_URL, statement_cache_size=0)
         try:
-            # === ТАБЛИЦА ДЛЯ КОМНАТ ===
+            # Таблица для комнат
             await conn.execute('''
                 CREATE TABLE IF NOT EXISTS room_leadership (
                     leader_id BIGINT PRIMARY KEY,
@@ -72,7 +67,7 @@ async def init_db():
             ''')
             print("✅ Таблица room_leadership создана/проверена")
             
-            # === ТАБЛИЦЫ ДЛЯ ЭКОНОМИКИ ===
+            # Таблицы для экономики
             await conn.execute('''
                 CREATE TABLE IF NOT EXISTS user_profiles (
                     user_id BIGINT PRIMARY KEY,
@@ -125,7 +120,6 @@ async def get_db_connection():
     return await asyncpg.connect(DATABASE_URL, statement_cache_size=0)
 
 class PgWrapper:
-    """Обертка для PostgreSQL, имитирующая интерфейс SQLite"""
     def __init__(self):
         self.last_result = None
     
@@ -151,15 +145,14 @@ class PgWrapper:
     def fetchall(self):
         return self.last_result if self.last_result else []
 
-# Глобальный объект для работы с БД
 cursor = PgWrapper()
 conn = cursor
 
-# === ИМПОРТ КОМАНД ===
-# Команды для комнат
+# === ИМПОРТ И ПЕРЕДАЧА CURSOR В ЭКОНОМИЧЕСКИЙ МОДУЛЬ ===
 from commands_room import setup_room_commands
+import commands_economy
+commands_economy.set_cursor(cursor)
 
-# Экономические команды
 from commands_economy import (
     eco_group,
     me,
@@ -169,18 +162,14 @@ from commands_economy import (
     withrole,
 )
 
-# === РЕГИСТРАЦИЯ КОМАНД ===
-# Регистрируем экономические группы
+# === РЕГИСТРАЦИЯ ===
 bot.tree.add_command(eco_group)
 bot.tree.add_command(role_group)
 bot.tree.add_command(slots_group)
-
-# Регистрируем отдельные экономические команды
 bot.tree.add_command(me)
 bot.tree.add_command(marry)
 bot.tree.add_command(withrole)
 
-# Регистрируем /room команды
 setup_room_commands(bot, cursor, CATEGORY_ID, restricted_role_id)
 
 @bot.event
@@ -188,8 +177,7 @@ async def on_ready():
     await init_db()
     
     await bot.change_presence(
-        status=discord.Status.online,
-        activity=discord.Game("/room manage | /eco balance")
+        status=discord.Status.online
     )
     
     print(f'✅ Bot is Up and Ready with PostgreSQL!')
