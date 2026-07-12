@@ -457,7 +457,7 @@ async def me(interaction: discord.Interaction, пользователь: discord
             return
 
         marriage_embed = await create_marriage_embed(cursor, i, пользователь)
-        marriage_view = create_marriage_view(cursor, пользователь)
+        marriage_view = await create_marriage_view(cursor, пользователь, i)
         await i.response.edit_message(embed=marriage_embed, view=marriage_view)
 
     def format_duration(duration):
