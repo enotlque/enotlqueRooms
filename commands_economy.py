@@ -2107,12 +2107,6 @@ class DiceButton(Button):
             if duel_file:
                 result_embed.set_image(url="attachment://duel.png")
 
-            result_embed.add_field(name=f"Бросок {self.author_name}",
-                                    value=f"<a:dddddice:1302688126136881223> {author_roll1} <:plus:1303069469140062310> <a:dddddice:1302688126136881223> {author_roll2} = **{author_total}**", inline=False)
-            result_embed.add_field(name=f"Бросок {interaction.user.name}",
-                                    value=f"<a:dddddice:1302688126136881223> {challenger_roll1} <:plus:1303069469140062310> <a:dddddice:1302688126136881223> {challenger_roll2} = **{challenger_total}**",
-                                    inline=False)
-
             if author_total > challenger_total:
                 winner_id = self.author_id
                 winner_name = self.author_name
@@ -2126,9 +2120,8 @@ class DiceButton(Button):
                 await cursor.execute('UPDATE user_profiles SET balance = balance + $1 WHERE user_id = $2',
                                       self.ставка, interaction.user.id)
 
-                result_embed.add_field(name="Результат",
-                                        value="<:shoked:1295095176548847717> Ничья! Ставки возвращены обоим игрокам.",
-                                        inline=False)
+                result_note = discord.Embed(color=int("6e6e6e", 16))
+                result_note.description = "<:shoked:1295095176548847717> Ничья! Ставки возвращены обоим игрокам."
 
                 view = View()
                 button = DiceButton(self.ставка, self.author_id, self.author_name, self.target_user)
@@ -2136,9 +2129,9 @@ class DiceButton(Button):
                 view.add_item(button)
 
                 if duel_file:
-                    await interaction.message.edit(embed=result_embed, view=view, attachments=[duel_file])
+                    await interaction.message.edit(embeds=[result_embed, result_note], view=view, attachments=[duel_file])
                 else:
-                    await interaction.message.edit(embed=result_embed, view=view)
+                    await interaction.message.edit(embeds=[result_embed, result_note], view=view)
 
                 self.game_completed = True
                 self.view.stop()
@@ -2153,11 +2146,10 @@ class DiceButton(Button):
             await cursor.execute('UPDATE user_profiles SET balance = balance + $1 WHERE user_id = $2',
                                   payout, winner_id)
 
-            result_embed.add_field(name="Результат",
-                                    value=(f"<:winner:1299059106060959766> Победитель: **{winner_name}**\n"
-                                           f"<a:coinonrole:1298391257042784266> Чистый выигрыш: **{net_win}**\n"
-                                           f"-# Комиссия зала ({int(DUEL_RAKE_PERCENT * 100)}% с банка): {rake}"),
-                                    inline=False)
+            result_note = discord.Embed(color=int("6e6e6e", 16))
+            result_note.description = (f"<:winner:1299059106060959766> Победитель: **{winner_name}**\n"
+                                        f"<a:coinonrole:1298391257042784266> Чистый выигрыш: **{net_win}**\n"
+                                        f"-# Комиссия: {rake}")
 
             view = View()
             button = DiceButton(self.ставка, self.author_id, self.author_name, self.target_user)
@@ -2165,9 +2157,9 @@ class DiceButton(Button):
             view.add_item(button)
 
             if duel_file:
-                await interaction.message.edit(embed=result_embed, view=view, attachments=[duel_file])
+                await interaction.message.edit(embeds=[result_embed, result_note], view=view, attachments=[duel_file])
             else:
-                await interaction.message.edit(embed=result_embed, view=view)
+                await interaction.message.edit(embeds=[result_embed, result_note], view=view)
 
             self.game_completed = True
             self.view.stop()
