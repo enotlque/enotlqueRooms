@@ -35,8 +35,8 @@ def setup_room_commands(bot, cursor, CATEGORY_ID, restricted_role_id):
 
         embed = Embed(color=0x6e6e6e)
         embed.set_author(name=f"Управление комнатой - {parent_view.owner.display_name}", icon_url=parent_view.owner.display_avatar.url)
-        embed.add_field(name="<:voice:1337103709150248992> Комната", value=parent_view.room_name, inline=True)
-        embed.add_field(name="<:people:1337103698568020091> Участников", value=str(parent_view.member_count), inline=True)
+        embed.add_field(name="<:mice:1526013753110433872> Комната", value=parent_view.room_name, inline=True)
+        embed.add_field(name="<:people:1526013751457874033> Участников", value=str(parent_view.member_count), inline=True)
 
         await parent_view.original_message.edit(embed=embed, view=parent_view)
 
@@ -303,7 +303,7 @@ def setup_room_commands(bot, cursor, CATEGORY_ID, restricted_role_id):
         
         if not room:
             embed = discord.Embed(
-                description="<:xxx:1299081147917008938> Комната не найдена.",
+                description="<:xrestik:1526013747112448090> Комната не найдена.",
                 color=0x6e6e6e
             )
             await interaction.response.send_message(embed=embed, ephemeral=True)
@@ -337,13 +337,13 @@ def setup_room_commands(bot, cursor, CATEGORY_ID, restricted_role_id):
         )
 
         # Добавление отдельных полей для каждого параметра
-        embed.add_field(name="<:13371memberwhite:1337148842755493958> Владелец", value=leader_name, inline=True)
-        embed.add_field(name="<:datasozdaniya:1337149528356159498> Дата создания", value=creation_date, inline=True)
-        embed.add_field(name="<a:diamond:1302038845491118204> Роль", value=role_name, inline=True)
-        embed.add_field(name="<:10447information:1337148819879628850> HEX-код роли", value=role_hex, inline=True)
-        embed.add_field(name="<:voice:1337103709150248992> Войс", value=voice_channel_mention, inline=True)
-        embed.add_field(name="<:textss:1337149867365105688> Текстовой", value=text_channel_mention, inline=True)
-        embed.add_field(name="<:ludi:1337149186856194112> Участников", value=str(member_count), inline=True)
+        embed.add_field(name="<:leader:1526013741106331729> Владелец", value=leader_name, inline=True)
+        embed.add_field(name="<:calendar:1526013739747508224> Дата создания", value=creation_date, inline=True)
+        embed.add_field(name="<:almaz:1526013736781873182> Роль", value=role_name, inline=True)
+        embed.add_field(name="<:info:1526013735246893238> HEX-код роли", value=role_hex, inline=True)
+        embed.add_field(name="<:mice:1526013753110433872> Войс", value=voice_channel_mention, inline=True)
+        embed.add_field(name="<:chat:1526013733833408612> Текстовой", value=text_channel_mention, inline=True)
+        embed.add_field(name="<:eshepeople:1526013744314843222> Участников", value=str(member_count), inline=True)
 
         await interaction.response.send_message(embed=embed)
 
@@ -461,8 +461,8 @@ def setup_room_commands(bot, cursor, CATEGORY_ID, restricted_role_id):
 
         embed = Embed(color=0x6e6e6e)
         embed.set_author(name=f"Управление комнатой - {user.display_name}", icon_url=user.avatar.url)
-        embed.add_field(name="<:voice:1337103709150248992> Комната", value=room_name, inline=True)
-        embed.add_field(name="<:people:1337103698568020091> Участников", value=str(member_count), inline=True)
+        embed.add_field(name="<:mice:1526013753110433872> Комната", value=room_name, inline=True)
+        embed.add_field(name="<:people:1526013751457874033> Участников", value=str(member_count), inline=True)
         embed.set_footer(text=f"Дата создания: {creation_date}")
 
         view = InitialView(
@@ -524,7 +524,7 @@ def setup_room_commands(bot, cursor, CATEGORY_ID, restricted_role_id):
 
     class BackButton(Button):
         def __init__(self, parent_view):
-            super().__init__(label="Назад", style=ButtonStyle.secondary, emoji="<:61991right:1337148887299002371>", row=1)
+            super().__init__(label="Назад", style=ButtonStyle.secondary, emoji="<:strelka:1526013742394118264>", row=1)
             self.parent_view = parent_view
 
         async def callback(self, interaction: Interaction):
@@ -548,8 +548,8 @@ def setup_room_commands(bot, cursor, CATEGORY_ID, restricted_role_id):
             embed = Embed(color=0x6e6e6e)
             embed.set_author(name=f"Управление комнатой - {self.parent_view.owner.display_name}",
                             icon_url=self.parent_view.owner.avatar.url)
-            embed.add_field(name="<:voice:1337103709150248992> Комната", value=self.parent_view.room_name, inline=True)
-            embed.add_field(name="<:people:1337103698568020091> Участников", value=str(self.parent_view.member_count), inline=True)
+            embed.add_field(name="<:mice:1526013753110433872> Комната", value=self.parent_view.room_name, inline=True)
+            embed.add_field(name="<:people:1526013751457874033> Участников", value=str(self.parent_view.member_count), inline=True)
 
             await interaction.response.edit_message(embed=embed, view=new_view)
             new_view.original_message = await interaction.original_response()
@@ -584,7 +584,7 @@ def setup_room_commands(bot, cursor, CATEGORY_ID, restricted_role_id):
 
     class MembersListButton(Button):
         def __init__(self, owner_role_id, parent_view):
-            super().__init__(label="Участники", style=ButtonStyle.secondary, emoji="<:91221members:1337148934992429137>", row=1)
+            super().__init__(label="Участники", style=ButtonStyle.secondary, emoji="<:eshepeople:1526013744314843222>", row=1)
             self.owner_role_id = owner_role_id
             self.parent_view = parent_view
 
@@ -698,14 +698,14 @@ def setup_room_commands(bot, cursor, CATEGORY_ID, restricted_role_id):
             embed = Embed(color=0x6e6e6e)
             embed.set_author(name=f"Управление комнатой - {self.parent_view.owner.display_name}",
                             icon_url=self.parent_view.owner.avatar.url)
-            embed.add_field(name="<:voice:1337103709150248992> Комната", value=self.parent_view.room_name, inline=True)
-            embed.add_field(name="<:91221members:1337148934992429137> Участников", value=str(self.parent_view.member_count), inline=True)
+            embed.add_field(name="<:mice:1526013753110433872> Комната", value=self.parent_view.room_name, inline=True)
+            embed.add_field(name="<:eshepeople:1526013744314843222> Участников", value=str(self.parent_view.member_count), inline=True)
 
             await interaction.response.edit_message(embed=embed, view=self.parent_view)
 
     class InviteButton(Button):
         def __init__(self, owner_role_id, parent_view):
-            super().__init__(label="Пригласить", style=ButtonStyle.secondary, emoji="<:checkmark:1299081136013709352>", row=0)
+            super().__init__(label="Пригласить", style=ButtonStyle.secondary, emoji="<:checkmark:1526013748718993428>", row=0)
             self.owner_role_id = owner_role_id
             self.parent_view = parent_view
 
@@ -731,7 +731,7 @@ def setup_room_commands(bot, cursor, CATEGORY_ID, restricted_role_id):
 
     class RemoveButton(Button):
         def __init__(self, owner_role_id, parent_view):
-            super().__init__(label="Исключить", style=ButtonStyle.secondary, emoji="<:xxx:1299081147917008938>", row=0)
+            super().__init__(label="Исключить", style=ButtonStyle.secondary, emoji="<:xrestik:1526013747112448090>", row=0)
             self.owner_role_id = owner_role_id
             self.parent_view = parent_view
 
@@ -757,7 +757,7 @@ def setup_room_commands(bot, cursor, CATEGORY_ID, restricted_role_id):
 
     class OpenChannelButton(Button):
         def __init__(self, owner_role_id, owner, room_name, member_count, voice_channel, original_message):
-            super().__init__(label="Закрыта", style=ButtonStyle.secondary, emoji="<:turnon:1337103564715200572>", row=1)
+            super().__init__(label="Закрыта", style=ButtonStyle.secondary, emoji="<:galo4ka:1526013745254629470>", row=1)
             self.owner_role_id = owner_role_id
             self.owner = owner
             self.room_name = room_name
@@ -799,18 +799,18 @@ def setup_room_commands(bot, cursor, CATEGORY_ID, restricted_role_id):
                 name=f"Управление комнатой - {self.owner.display_name}",
                 icon_url=self.owner.avatar.url
             ).add_field(
-                name="<:voice:1337103709150248992> Комната",
+                name="<:mice:1526013753110433872> Комната",
                 value=self.room_name,
                 inline=True
             ).add_field(
-                name="<:people:1337103698568020091> Участников",
+                name="<:people:1526013751457874033> Участников",
                 value=str(self.member_count),
                 inline=True
             )
 
     class CloseChannelButton(Button):
         def __init__(self, owner_role_id, owner, room_name, member_count, voice_channel, original_message):
-            super().__init__(label="Открыта", style=ButtonStyle.secondary, emoji="<:turnoff:1337103551255543839>", row=1)
+            super().__init__(label="Открыта", style=ButtonStyle.secondary, emoji="<:offff:1526013732591894788>", row=1)
             self.owner_role_id = owner_role_id
             self.owner = owner
             self.room_name = room_name
@@ -852,11 +852,11 @@ def setup_room_commands(bot, cursor, CATEGORY_ID, restricted_role_id):
                 name=f"Управление комнатой - {self.owner.display_name}",
                 icon_url=self.owner.avatar.url
             ).add_field(
-                name="<:voice:1337103709150248992> Комната",
+                name="<:mice:1526013753110433872> Комната",
                 value=self.room_name,
                 inline=True
             ).add_field(
-                name="<:people:1337103698568020091> Участников",
+                name="<:people:1526013751457874033> Участников",
                 value=str(self.member_count),
                 inline=True
             )
@@ -954,9 +954,9 @@ def setup_room_commands(bot, cursor, CATEGORY_ID, restricted_role_id):
             summary = Embed(color=0x6e6e6e)
             summary.set_author(name="Приглашения обработаны", icon_url=owner.display_avatar.url)
             if invited:
-                summary.add_field(name="<:checkmark:1299081136013709352> Приглашены", value="\n".join(invited), inline=False)
+                summary.add_field(name="<:checkmark:1526013748718993428> Приглашены", value="\n".join(invited), inline=False)
             if skipped:
-                summary.add_field(name="<:xxx:1299081147917008938> Пропущены", value="\n".join(skipped), inline=False)
+                summary.add_field(name="<:xrestik:1526013747112448090> Пропущены", value="\n".join(skipped), inline=False)
             summary.set_footer(text=f"Активных приглашений: {len(pending_set)}/{MAX_PENDING_INVITES}")
             if not invited and not skipped:
                 summary.description = "Никто не был выбран."
@@ -1025,9 +1025,9 @@ def setup_room_commands(bot, cursor, CATEGORY_ID, restricted_role_id):
             summary = Embed(color=0x6e6e6e)
             summary.set_author(name="Исключение обработано", icon_url=owner.display_avatar.url)
             if removed:
-                summary.add_field(name="<:checkmark:1299081136013709352> Исключены", value="\n".join(removed), inline=False)
+                summary.add_field(name="<:checkmark:1526013748718993428> Исключены", value="\n".join(removed), inline=False)
             if skipped:
-                summary.add_field(name="<:xxx:1299081147917008938> Пропущены", value="\n".join(skipped), inline=False)
+                summary.add_field(name="<:xrestik:1526013747112448090> Пропущены", value="\n".join(skipped), inline=False)
             if not removed and not skipped:
                 summary.description = "Никто не был выбран."
 
@@ -1057,7 +1057,7 @@ def setup_room_commands(bot, cursor, CATEGORY_ID, restricted_role_id):
                 except:
                     pass
 
-        @discord.ui.button(label="Да", style=ButtonStyle.success, emoji="<:checkmark:1299081136013709352>")
+        @discord.ui.button(label="Да", style=ButtonStyle.success, emoji="<:checkmark:1526013748718993428>")
         async def accept_button(self, interaction: Interaction, button: Button):
             # Только приглашенный пользователь может принять
             if interaction.user.id != self.member.id:
@@ -1091,7 +1091,7 @@ def setup_room_commands(bot, cursor, CATEGORY_ID, restricted_role_id):
             except:
                 pass
 
-        @discord.ui.button(label="Нет", style=ButtonStyle.danger, emoji="<:xxx:1299081147917008938>")
+        @discord.ui.button(label="Нет", style=ButtonStyle.danger, emoji="<:xrestik:1526013747112448090>")
         async def decline_button(self, interaction: Interaction, button: Button):
             # Приглашенный пользователь или владелец комнаты могут отклонить
             if interaction.user.id != self.member.id and interaction.user.id != self.owner.id:
@@ -1138,8 +1138,8 @@ def setup_room_commands(bot, cursor, CATEGORY_ID, restricted_role_id):
 
             embed = Embed(color=0x6e6e6e)
             embed.set_author(name=f"Управление комнатой - {self.parent_view.owner.display_name}", icon_url=self.parent_view.owner.avatar.url)
-            embed.add_field(name="<:voice:1337103709150248992> Комната", value=self.parent_view.room_name, inline=True)
-            embed.add_field(name="<:people:1337103698568020091> Участников", value=str(self.parent_view.member_count), inline=True)
+            embed.add_field(name="<:mice:1526013753110433872> Комната", value=self.parent_view.room_name, inline=True)
+            embed.add_field(name="<:people:1526013751457874033> Участников", value=str(self.parent_view.member_count), inline=True)
 
             await self.parent_view.original_message.edit(embed=embed, view=self.parent_view)
 
