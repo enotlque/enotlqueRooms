@@ -1,6 +1,7 @@
 import discord
 from discord import app_commands, Interaction, Embed, utils, ButtonStyle
 from discord import TextStyle
+from discord.ext import tasks
 import random
 import discord.ui
 from discord.ui import View, Button, Modal, TextInput
@@ -310,14 +311,14 @@ async def top(interaction: discord.Interaction):
 # ============================================
 
 async def create_profile_embed(cursor, user, guild):
-    result = await cursor.execute('SELECT balance, status FROM user_profiles WHERE user_id = $1', user.id)
+    result = await cursor.execute('SELECT balance, status, god_kissed FROM user_profiles WHERE user_id = $1', user.id)
     row = cursor.fetchone()
 
     if not row:
         await cursor.execute('INSERT INTO user_profiles (user_id, balance) VALUES ($1, $2)', user.id, 0)
-        balance_amount, status = 0, "Статуса нет"
+        balance_amount, status, god_kissed = 0, "Статуса нет", "—"
     else:
-        balance_amount, status = row
+        balance_amount, status, god_kissed = row
 
     embed = discord.Embed(color=0x6e6e6e, title="", description="")
     embed.add_field(name="Статус", value=f"```\n{status}\n```", inline=False)
@@ -328,6 +329,7 @@ async def create_profile_embed(cursor, user, guild):
         now = datetime.now(user.joined_at.tzinfo)
         days_on_server = str((now - user.joined_at).days)
     embed.add_field(name="Дней на сервере", value=f"```{days_on_server}```", inline=True)
+    embed.add_field(name="Целованный богом", value=f"```{god_kissed or '—'}```", inline=True)
 
     result = await cursor.execute('SELECT user1_id, user2_id FROM marriages WHERE user1_id = $1 OR user2_id = $1', user.id)
     marriage_data = cursor.fetchone()
@@ -720,8 +722,7 @@ async def me(interaction: discord.Interaction, пользователь: discord
                 )
                 return
             updated_embed = await create_profile_embed(cursor, user, i.guild)
-            updated_view = await create_marriage_view(cursor, user, i)
-            await i.response.edit_message(embed=updated_embed, view=updated_view)
+            await i.response.edit_message(embed=updated_embed, view=view)
 
         button_back.callback = back_callback
         marriage_view.add_item(button_back)
@@ -745,7 +746,7 @@ async def marry(interaction: discord.Interaction, пользователь: disc
     
     MALE_ROLE_ID = 1126893214536827050
     FEMALE_ROLE_ID = 1126893217405739090
-    MARRIAGE_COST = 799
+    MARRIAGE_COST = 500
     MARRIAGE_CATEGORY_ID = 1132300392215097365
     
     async def check_basic_conditions():
@@ -779,8 +780,8 @@ async def marry(interaction: discord.Interaction, пользователь: disc
                 await interaction.response.send_message(f"У вас недостаточно монет! Необходимо {MARRIAGE_COST} монет.", ephemeral=True)
                 return False
                 
-            result = await cursor.execute('SELECT * FROM marriages WHERE user1_id = $1 OR user2_id = $1 OR user1_id = $2 OR user2_id = $2',
-                                         interaction.user.id, пользователь.id)
+            result = await cursor.execute('SELECT * FROM marriages WHERE user1_id = $1 OR user2_id = $1 OR user1_id = $2 OR user2_id = $2', 
+                                         interaction.user.id, interaction.user.id, пользователь.id, пользователь.id)
             if cursor.fetchone():
                 await interaction.response.send_message("Один из пользователей уже состоит в браке!", ephemeral=True)
                 return False
@@ -912,17 +913,111 @@ async def marry(interaction: discord.Interaction, пользователь: disc
         await interaction.response.send_message("Произошла непредвиденная ошибка. Пожалуйста, попробуйте позже.", ephemeral=True)
 
 # ============================================
+# АВТОПРОДЛЕНИЕ / АВТОРАСТОРЖЕНИЕ БРАКОВ
+# ============================================
+
+MARRIAGE_RENEWAL_DAY_COST = 60      # Стоимость одного дня продления (совпадает с ExtendMarriageModal)
+MARRIAGE_AUTO_RENEW_MAX_DAYS = 30   # Максимум дней, на которое продлеваем за один автоцикл
+
+_marriage_task_started = False
+
+def start_marriage_expiry_task(bot):
+    """Запускает фоновую проверку истёкших браков. Безопасно вызывать повторно — стартует только один раз."""
+    global _marriage_task_started
+    if _marriage_task_started:
+        return
+    _marriage_task_started = True
+
+    @tasks.loop(hours=1)
+    async def check_marriage_expirations():
+        global cursor
+        try:
+            await cursor.execute(
+                'SELECT user1_id, user2_id, marriage_balance, expires_at, voice_marry_id FROM marriages'
+            )
+            rows = cursor.fetchall()
+        except Exception as e:
+            print(f"❌ Ошибка при чтении браков для автопроверки: {e}")
+            return
+
+        now = datetime.now()
+
+        for row in rows:
+            user1_id, user2_id, marriage_balance, expires_at_str, voice_channel_id = row
+
+            try:
+                expires_at = datetime.fromisoformat(expires_at_str)
+            except (TypeError, ValueError):
+                continue
+
+            if expires_at > now:
+                continue  # Брак ещё действителен
+
+            affordable_days = (marriage_balance or 0) // MARRIAGE_RENEWAL_DAY_COST
+
+            if affordable_days >= 1:
+                # Хватает средств на общем балансе — продлеваем автоматически
+                days_to_add = min(affordable_days, MARRIAGE_AUTO_RENEW_MAX_DAYS)
+                cost = days_to_add * MARRIAGE_RENEWAL_DAY_COST
+                new_expires_at = (expires_at + timedelta(days=days_to_add)).isoformat()
+
+                try:
+                    await cursor.execute(
+                        'UPDATE marriages SET expires_at = $1, marriage_balance = marriage_balance - $2, renewed_at = $3 '
+                        'WHERE user1_id = $4 AND user2_id = $5',
+                        new_expires_at, cost, now.isoformat(), user1_id, user2_id
+                    )
+                    print(f"✅ Брак {user1_id}-{user2_id} автопродлён на {days_to_add} дн. (списано {cost} с общего баланса)")
+                except Exception as e:
+                    print(f"❌ Ошибка автопродления брака {user1_id}-{user2_id}: {e}")
+                continue
+
+            # Средств не хватает даже на 1 день — брак автоматически расторгается
+            if voice_channel_id:
+                channel = bot.get_channel(voice_channel_id)
+                if channel:
+                    try:
+                        await channel.delete(reason="Автоматическое расторжение брака: закончился общий баланс")
+                    except Exception as e:
+                        print(f"❌ Не удалось удалить голосовой канал брака {user1_id}-{user2_id}: {e}")
+
+            try:
+                await cursor.execute('DELETE FROM marriages WHERE user1_id = $1 AND user2_id = $2', user1_id, user2_id)
+                print(f"💔 Брак {user1_id}-{user2_id} автоматически расторгнут: не хватило средств на продление")
+            except Exception as e:
+                print(f"❌ Ошибка автоматического расторжения брака {user1_id}-{user2_id}: {e}")
+                continue
+
+            divorce_embed = discord.Embed(
+                description="Ваш брак был автоматически расторгнут: на общем балансе не хватило средств для продления.",
+                color=0x6e6e6e
+            )
+            for uid in (user1_id, user2_id):
+                user_obj = bot.get_user(uid)
+                if user_obj:
+                    try:
+                        await user_obj.send(embed=divorce_embed)
+                    except Exception:
+                        pass  # Пользователь закрыл личные сообщения — не критично
+
+    @check_marriage_expirations.before_loop
+    async def before_check():
+        await bot.wait_until_ready()
+
+    check_marriage_expirations.start()
+
+# ============================================
 # SLOTS GROUP
 # ============================================
 
 active_players: Set[int] = set()
 
 SLOT_SYMBOLS = {
-    "<:orangediamond:1295376833688113232>": (2, 150, 30),   
-    "<:slotiseven:1337178032430911488>": (6, 55, 16),
-    "<:cherry128x:1337421942529065082>": (15, 22, 0),        
-    "<:lemon128x:1337421957431300146>": (25, 9, 0),          
-    "<:strawberry128x:1337421500898082817>": (52, 3, 0)
+    "<:orangediamond:1295376833688113232>": (1, 50, 15),
+    "<:slotiseven:1337178032430911488>": (3, 25, 8),
+    "<:cherry128x:1337421942529065082>": (10, 10, 3),
+    "<:lemon128x:1337421957431300146>": (20, 4, 1),
+    "<:strawberry128x:1337421500898082817>": (35, 2, 0)
 }
 
 LEFT_ARROW = "<:rightarrow:1337396550204129330>"
@@ -1048,7 +1143,7 @@ async def slots_info(interaction: discord.Interaction):
         title="Руководство по игре в слоты",
         color=int("6e6e6e", 16)
     )
-
+    
     info = (
         "<:infor:1337141420305416252> **Основная информация**\n"
         "<:smalldotwhite:1337130077808230508> Минимальная ставка: **50** <:wwaluta:1337129761956167751>\n"
@@ -1056,19 +1151,19 @@ async def slots_info(interaction: discord.Interaction):
         "<:smalldotwhite:1337130077808230508> Выигрыш рассчитывается по средней линии\n\n"
         "<:smska:1337141319394529280> **Символы и множители**\n"
         f"> Алмаз <:orangediamond:1295376833688113232>\n"
-        "<:smalldotwhite:1337130077808230508> 3 в ряд: х150 от ставки (джекпот)\n"
-        "<:smalldotwhite:1337130077808230508> 2 в ряд: х30 от ставки\n\n"
+        "<:smalldotwhite:1337130077808230508> 3 в ряд: х50 от ставки\n"
+        "<:smalldotwhite:1337130077808230508> 2 в ряд: х15 от ставки\n\n"
         f"> Семёрка <:slotiseven:1337178032430911488>\n"
-        "<:smalldotwhite:1337130077808230508> 3 в ряд: х55 от ставки\n"
-        "<:smalldotwhite:1337130077808230508> 2 в ряд: х16 от ставки\n\n"
+        "<:smalldotwhite:1337130077808230508> 3 в ряд: х25 от ставки\n"
+        "<:smalldotwhite:1337130077808230508> 2 в ряд: х8 от ставки\n\n"
         f"> Вишня <:cherry128x:1337421942529065082>\n"
-        "<:smalldotwhite:1337130077808230508> 3 в ряд: х22 от ставки\n"
-        "<:smalldotwhite:1337130077808230508> 2 в ряд: проигрыш\n\n"
+        "<:smalldotwhite:1337130077808230508> 3 в ряд: х10 от ставки\n"
+        "<:smalldotwhite:1337130077808230508> 2 в ряд: х3 от ставки\n\n"
         f"> Лимон <:lemon128x:1337421957431300146>\n"
-        "<:smalldotwhite:1337130077808230508> 3 в ряд: х9 от ставки\n"
-        "<:smalldotwhite:1337130077808230508> 2 в ряд: проигрыш\n\n"
+        "<:smalldotwhite:1337130077808230508> 3 в ряд: х4 от ставки\n"
+        "<:smalldotwhite:1337130077808230508> 2 в ряд: возврат ставки\n\n"
         f"> Клубника <:strawberry128x:1337421500898082817>\n"
-        "<:smalldotwhite:1337130077808230508> 3 в ряд: х3 от ставки\n"
+        "<:smalldotwhite:1337130077808230508> 3 в ряд: х2 от ставки\n"
         "<:smalldotwhite:1337130077808230508> 2 в ряд: проигрыш\n\n"
         "<:controller:1337129028745826364> **Как играть**\n"
         "1. Используйте команду `/slots bet`\n"
@@ -1077,11 +1172,10 @@ async def slots_info(interaction: discord.Interaction):
         "4. При выигрыше сумма автоматически зачисляется на баланс\n\n"
         "<:warning:1295095037734031472> **Важно**\n"
         "• Учитываются только символы в средней линии\n"
-        "• Только алмаз и семёрка приносят выигрыш при 2 в ряд — остальные символы платят исключительно за 3 в ряд\n"
-        "• Если линия не совпала (все три символа разные) — ставка сгорает полностью\n"
-        "• Как в настоящем казино: чаще всего ставка проигрывается, но шанс на крупный выигрыш всегда есть"
+        "• Выигрышная комбинация считается слева направо\n"
+        "• При проигрыше ставка не возвращается"
     )
-
+    
     embed.description = info
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
