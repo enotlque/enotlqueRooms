@@ -202,7 +202,7 @@ def setup_room_commands(bot, cursor, CATEGORY_ID, restricted_role_id):
         rooms = cursor.fetchall()
 
         if not rooms:
-            embed = Embed(description="<a:print:1337103792491200553> На данный момент комнат не обнаружено", color=0x000000)
+            embed = Embed(description="<a:writing:1526019043083948232> На данный момент комнат не обнаружено", color=0x000000)
             if new_message:
                 await interaction.response.send_message(embed=embed)
             else:
@@ -494,7 +494,7 @@ def setup_room_commands(bot, cursor, CATEGORY_ID, restricted_role_id):
 
     class ManageButton(Button):
         def __init__(self, parent_view):
-            super().__init__(label="Управлять", style=ButtonStyle.secondary, emoji="<:customprof:1337103673649664072>")
+            super().__init__(label="Управлять", style=ButtonStyle.secondary, emoji="<:knopka1:1526013750090399925>")
             self.parent_view = parent_view
 
         async def callback(self, interaction: Interaction):
