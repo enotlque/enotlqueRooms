@@ -2,3 +2,4 @@ discord.py
 Flask
 asyncpg
 psycopg2-binary
+Pillow
