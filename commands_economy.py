@@ -746,7 +746,7 @@ async def marry(interaction: discord.Interaction, пользователь: disc
     
     MALE_ROLE_ID = 1126893214536827050
     FEMALE_ROLE_ID = 1126893217405739090
-    MARRIAGE_COST = 500
+    MARRIAGE_COST = 1600
     MARRIAGE_CATEGORY_ID = 1132300392215097365
     
     async def check_basic_conditions():
@@ -916,7 +916,7 @@ async def marry(interaction: discord.Interaction, пользователь: disc
 # АВТОПРОДЛЕНИЕ / АВТОРАСТОРЖЕНИЕ БРАКОВ
 # ============================================
 
-MARRIAGE_RENEWAL_DAY_COST = 60      # Стоимость одного дня продления (совпадает с ExtendMarriageModal)
+MARRIAGE_RENEWAL_DAY_COST = 90      # Стоимость одного дня продления (совпадает с ExtendMarriageModal)
 MARRIAGE_AUTO_RENEW_MAX_DAYS = 30   # Максимум дней, на которое продлеваем за один автоцикл
 
 _marriage_task_started = False
@@ -1354,8 +1354,8 @@ async def create(interaction: discord.Interaction, название: str, цве
 
     result = await cursor.execute("SELECT balance FROM user_profiles WHERE user_id = $1", interaction.user.id)
     user_profile = cursor.fetchone()
-    if not user_profile or user_profile[0] < 1000:
-        await interaction.followup.send("У вас недостаточно средств для создания роли. Требуется 1000 монет.", ephemeral=True)
+    if not user_profile or user_profile[0] < 800:
+        await interaction.followup.send("У вас недостаточно средств для создания роли. Требуется 800 монет.", ephemeral=True)
         return
 
     guild = interaction.guild
@@ -1380,7 +1380,7 @@ async def create(interaction: discord.Interaction, название: str, цве
 
     await interaction.user.add_roles(role)
 
-    await cursor.execute("UPDATE user_profiles SET balance = balance - 1000 WHERE user_id = $1", interaction.user.id)
+    await cursor.execute("UPDATE user_profiles SET balance = balance - 800 WHERE user_id = $1", interaction.user.id)
 
     creation_date = datetime.now()
     expiration_date = creation_date + timedelta(days=30)
@@ -1502,7 +1502,7 @@ class RoleSelectView(View):
         embed.add_field(name="<:pause:1337141200334880838> Дата архивации", value=archivation_date if archivation_date else "Нет")
         embed.add_field(name="<:unpause:1337141212599025684> Дата разархивации", value=razarchive_date if razarchive_date else "Нет")
         embed.add_field(name="<a:coinonrole:1298391257042784266> Потрачено монет на роль", value=str(allcoinsend_on_role))
-        embed.set_footer(text="Архивация 200 монет")
+        embed.set_footer(text="Архивация 50 монет")
 
         return embed
 
@@ -1540,7 +1540,7 @@ class RoleSelectView(View):
                 return
 
             user_balance = await get_user_balance(cursor, user_id)
-            if user_balance < 200:
+            if user_balance < 50:
                 await interaction.response.send_message("У вас недостаточно монет для архивации роли.", ephemeral=True)
                 return
 
@@ -1562,13 +1562,13 @@ class RoleSelectView(View):
             else:
                 remaining_time_delta = datetime.strptime(expiration_date, "%d.%m.%Y в %Hч %Mм %Sс") - datetime.now()
                 remaining_time = f"{remaining_time_delta.days}д {remaining_time_delta.seconds // 3600}ч {(remaining_time_delta.seconds % 3600) // 60}м {remaining_time_delta.seconds % 60}с"
-                await cursor.execute("UPDATE roles SET archived = 1, archivation_date = $1, expiration_date = '-', remaining_time = $2, allcoinsend_on_role = allcoinsend_on_role + 200 WHERE role_name = $3",
+                await cursor.execute("UPDATE roles SET archived = 1, archivation_date = $1, expiration_date = '-', remaining_time = $2, allcoinsend_on_role = allcoinsend_on_role + 50 WHERE role_name = $3",
                                    datetime.now().strftime("%d.%m.%Y в %Hч %Mм %Sс"), remaining_time, role_name)
                 role = get(interaction.guild.roles, name=role_name)
                 if role:
                     await interaction.user.remove_roles(role)
-                await interaction.response.send_message(f"Роль {role_name} заархивирована и удалена у вас. Вычтено 200 монет.", ephemeral=True)
-                await subtract_user_balance(cursor, user_id, 200)
+                await interaction.response.send_message(f"Роль {role_name} заархивирована и снята. Вычтено 50 монет.", ephemeral=True)
+                await subtract_user_balance(cursor, user_id, 50)
 
             result = await cursor.execute("SELECT * FROM roles WHERE role_name = $1", role_name)
             updated_role_info = cursor.fetchone()
@@ -1626,7 +1626,7 @@ class ExtendRoleModal(Modal):
         self.view = view
         self.user_id = user_id
 
-        self.add_item(TextInput(label="Количество дней (1 день 33 монет)", style=TextStyle.short, placeholder="Введите количество дней"))
+        self.add_item(TextInput(label="Количество дней (1 день 45 монет)", style=TextStyle.short, placeholder="Введите количество дней"))
 
     async def on_submit(self, interaction: Interaction):
         global cursor
@@ -1646,7 +1646,7 @@ class ExtendRoleModal(Modal):
         new_expiration_date = min(current_expiration + timedelta(days=days_to_extend), max_extend_date)
 
         actual_days_extended = (new_expiration_date - current_expiration).days
-        cost_of_extension = actual_days_extended * 33
+        cost_of_extension = actual_days_extended * 45
 
         user_balance = await get_user_balance(cursor, self.user_id)
         if user_balance < cost_of_extension:
