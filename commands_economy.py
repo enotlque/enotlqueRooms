@@ -745,7 +745,7 @@ async def marry(interaction: discord.Interaction, пользователь: disc
     
     MALE_ROLE_ID = 1126893214536827050
     FEMALE_ROLE_ID = 1126893217405739090
-    MARRIAGE_COST = 500
+    MARRIAGE_COST = 799
     MARRIAGE_CATEGORY_ID = 1132300392215097365
     
     async def check_basic_conditions():
@@ -779,8 +779,8 @@ async def marry(interaction: discord.Interaction, пользователь: disc
                 await interaction.response.send_message(f"У вас недостаточно монет! Необходимо {MARRIAGE_COST} монет.", ephemeral=True)
                 return False
                 
-            result = await cursor.execute('SELECT * FROM marriages WHERE user1_id = $1 OR user2_id = $1 OR user1_id = $2 OR user2_id = $2', 
-                                         interaction.user.id, interaction.user.id, пользователь.id, пользователь.id)
+            result = await cursor.execute('SELECT * FROM marriages WHERE user1_id = $1 OR user2_id = $1 OR user1_id = $2 OR user2_id = $2',
+                                         interaction.user.id, пользователь.id)
             if cursor.fetchone():
                 await interaction.response.send_message("Один из пользователей уже состоит в браке!", ephemeral=True)
                 return False
