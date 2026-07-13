@@ -173,16 +173,20 @@ from commands_economy import (
     marry,
     role_group,
     slots_group,
+    top_group,
     withrole,
     duel,
     start_marriage_expiry_task,
     start_role_expiry_task,
+    setup_role_delete_listener,
+    reconcile_deleted_roles,
 )
 
 # === РЕГИСТРАЦИЯ ===
 bot.tree.add_command(eco_group)
 bot.tree.add_command(role_group)
 bot.tree.add_command(slots_group)
+bot.tree.add_command(top_group)
 bot.tree.add_command(me)
 bot.tree.add_command(marry)
 bot.tree.add_command(withrole)
@@ -191,10 +195,12 @@ bot.tree.add_command(duel)
 setup_room_commands(bot, cursor, CATEGORY_ID, restricted_role_id)
 setup_admin_commands(bot)
 setup_lobby_commands(bot, cursor)
+setup_role_delete_listener(bot)
 
 @bot.event
 async def on_ready():
     await init_db()
+    await reconcile_deleted_roles(bot)
     
     await bot.change_presence(
         status=discord.Status.online
