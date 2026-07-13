@@ -1,4 +1,4 @@
-import discord 
+import discord
 from discord.ext import commands
 from discord import Intents
 from config import TOKEN
@@ -175,6 +175,7 @@ from commands_economy import (
     slots_group,
     withrole,
     start_marriage_expiry_task,
+    start_role_expiry_task,
 )
 
 # === РЕГИСТРАЦИЯ ===
@@ -199,8 +200,12 @@ async def on_ready():
     
     print(f'✅ Bot is Up and Ready with PostgreSQL!')
 
+    # Запуск фоновых задач
     start_marriage_expiry_task(bot)
     print('✅ Задача автопроверки браков запущена')
+    
+    start_role_expiry_task(bot)
+    print('✅ Задача автопроверки ролей запущена')
 
     try:
         synced = await bot.tree.sync()
