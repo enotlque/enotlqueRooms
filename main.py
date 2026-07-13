@@ -174,6 +174,7 @@ from commands_economy import (
     role_group,
     slots_group,
     withrole,
+    duel,
     start_marriage_expiry_task,
     start_role_expiry_task,
 )
@@ -185,6 +186,7 @@ bot.tree.add_command(slots_group)
 bot.tree.add_command(me)
 bot.tree.add_command(marry)
 bot.tree.add_command(withrole)
+bot.tree.add_command(duel)
 
 setup_room_commands(bot, cursor, CATEGORY_ID, restricted_role_id)
 setup_admin_commands(bot)
