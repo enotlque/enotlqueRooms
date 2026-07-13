@@ -77,6 +77,12 @@ async def init_db():
                 )
             ''')
             print("✅ Таблица user_profiles создана/проверена")
+
+            # Новая колонка профиля — заполняется вручную через БД
+            await conn.execute('''
+                ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS god_kissed TEXT DEFAULT '—'
+            ''')
+            print("✅ Колонка god_kissed создана/проверена")
             
             await conn.execute('''
                 CREATE TABLE IF NOT EXISTS marriages (
@@ -173,6 +179,7 @@ from commands_economy import (
     role_group,
     slots_group,
     withrole,
+    start_marriage_expiry_task,
 )
 
 # === РЕГИСТРАЦИЯ ===
@@ -196,6 +203,10 @@ async def on_ready():
     )
     
     print(f'✅ Bot is Up and Ready with PostgreSQL!')
+
+    start_marriage_expiry_task(bot)
+    print('✅ Задача автопроверки браков запущена')
+
     try:
         synced = await bot.tree.sync()
         print(f'✅ Synced {len(synced)} command(s)')
