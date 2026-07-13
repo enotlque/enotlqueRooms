@@ -784,6 +784,10 @@ async def marry(interaction: discord.Interaction, пользователь: disc
     MARRIAGE_COST = 1600
     MARRIAGE_CATEGORY_ID = 1132300392215097365
     
+    # Хранилище активных предложений (user_id -> сумма)
+    active_proposals = getattr(marry, 'active_proposals', {})
+    marry.active_proposals = active_proposals
+    
     async def check_basic_conditions():
         if пользователь.id == interaction.user.id:
             await interaction.response.send_message("Вы не можете сделать предложение самому себе!", ephemeral=True)
@@ -807,17 +811,52 @@ async def marry(interaction: discord.Interaction, пользователь: disc
             
         return True
 
-    async def check_balance():
-        result = await cursor.execute('SELECT balance FROM user_profiles WHERE user_id = $1', interaction.user.id)
-        row = cursor.fetchone()
-        if not row or row[0] < MARRIAGE_COST:
-            await interaction.response.send_message(f"У вас недостаточно монет! Необходимо {MARRIAGE_COST} монет.", ephemeral=True)
+    async def check_balance_and_profiles():
+        # Проверяем активные предложения
+        if interaction.user.id in active_proposals:
+            await interaction.response.send_message(
+                "У вас уже есть активное предложение! Дождитесь его завершения.",
+                ephemeral=True
+            )
             return False
+        
+        # Проверяем и создаём профиль отправителя если его нет
+        result = await cursor.execute('SELECT balance FROM user_profiles WHERE user_id = $1', interaction.user.id)
+        sender_row = cursor.fetchone()
+        
+        if not sender_row:
+            await cursor.execute(
+                'INSERT INTO user_profiles (user_id, balance, last_daily_claimed) VALUES ($1, $2, $3)',
+                interaction.user.id, 0, None
+            )
+            await interaction.response.send_message(
+                f"У вас недостаточно монет! Необходимо {MARRIAGE_COST} монет. У вас 0 монет.",
+                ephemeral=True
+            )
+            return False
+        
+        if sender_row[0] < MARRIAGE_COST:
+            await interaction.response.send_message(
+                f"У вас недостаточно монет! Необходимо {MARRIAGE_COST} монет. У вас {sender_row[0]} монет.",
+                ephemeral=True
+            )
+            return False
+        
+        # Проверяем и создаём профиль получателя если его нет
+        result = await cursor.execute('SELECT balance FROM user_profiles WHERE user_id = $1', пользователь.id)
+        receiver_row = cursor.fetchone()
+        
+        if not receiver_row:
+            await cursor.execute(
+                'INSERT INTO user_profiles (user_id, balance, last_daily_claimed) VALUES ($1, $2, $3)',
+                пользователь.id, 0, None
+            )
+            logger.info(f"Создан профиль для пользователя {пользователь.id} при отправке предложения")
+            
         return True
 
     async def check_marriage_status():
         try:
-            # Проверяем состоит ли кто-то из пользователей в браке
             await cursor.execute(
                 'SELECT * FROM marriages WHERE user1_id = $1 OR user2_id = $1 OR user1_id = $2 OR user2_id = $2',
                 interaction.user.id, пользователь.id
@@ -833,10 +872,15 @@ async def marry(interaction: discord.Interaction, пользователь: disc
 
     class MarriageView(discord.ui.View):
         def __init__(self):
-            super().__init__(timeout=30)
+            super().__init__(timeout=60)
             self.message = None
+            self.is_processed = False  # Флаг, чтобы избежать двойной обработки
 
         async def on_timeout(self):
+            if self.is_processed:
+                return
+            self.is_processed = True
+            
             sender_avatar = interaction.user.avatar.url if interaction.user.avatar else interaction.user.default_avatar.url
             sender_name = interaction.user.name
             
@@ -850,31 +894,121 @@ async def marry(interaction: discord.Interaction, пользователь: disc
             )
             
             # Возвращаем монеты отправителю
-            await cursor.execute('UPDATE user_profiles SET balance = balance + $1 WHERE user_id = $2', 
-                                MARRIAGE_COST, interaction.user.id)
+            try:
+                # Проверяем, не был ли уже создан брак
+                await cursor.execute(
+                    'SELECT * FROM marriages WHERE user1_id = $1 OR user2_id = $1',
+                    interaction.user.id
+                )
+                if not cursor.fetchone():
+                    # Возвращаем монеты
+                    await cursor.execute('UPDATE user_profiles SET balance = balance + $1 WHERE user_id = $2', 
+                                        MARRIAGE_COST, interaction.user.id)
+                    logger.info(f"Возвращены монеты пользователю {interaction.user.id} при таймауте")
+                
+                # Удаляем из активных предложений
+                if interaction.user.id in active_proposals:
+                    del active_proposals[interaction.user.id]
+            except Exception as e:
+                logger.error(f"Error returning coins on timeout: {e}")
             
             await self.message.edit(embed=embed, view=None)
+            self.stop()
 
         @discord.ui.button(label="Принять", style=discord.ButtonStyle.green)
         async def accept(self, button_interaction: discord.Interaction, button: discord.ui.Button):
             global cursor
+            if self.is_processed:
+                await button_interaction.response.send_message("Это предложение уже обработано!", ephemeral=True)
+                return
+                
             if button_interaction.user.id != пользователь.id:
                 await button_interaction.response.send_message("Это не ваше предложение!", ephemeral=True)
                 return
 
+            # Блокируем кнопки
+            self.is_processed = True
+            for child in self.children:
+                child.disabled = True
+            await self.message.edit(view=self)
+
             try:
-                # Проверяем баланс отправителя ещё раз
+                # === КРИТИЧЕСКАЯ ПРОВЕРКА: баланс отправителя ===
                 result = await cursor.execute('SELECT balance FROM user_profiles WHERE user_id = $1', interaction.user.id)
-                row = cursor.fetchone()
-                if not row or row[0] < MARRIAGE_COST:
-                    await button_interaction.response.send_message(f"У отправителя недостаточно монет! Необходимо {MARRIAGE_COST} монет.", ephemeral=True)
+                sender_row = cursor.fetchone()
+                
+                # Проверяем, что у отправителя всё ещё есть достаточно монет
+                # (с учётом того, что мы уже зарезервировали 1600)
+                if not sender_row or sender_row[0] < 0:
+                    # Если баланс отрицательный или отсутствует - что-то пошло не так
+                    await button_interaction.response.send_message(
+                        "Ошибка: баланс отправителя повреждён. Обратитесь к администратору.",
+                        ephemeral=True
+                    )
+                    # Возвращаем зарезервированные монеты
+                    await cursor.execute('UPDATE user_profiles SET balance = balance + $1 WHERE user_id = $2', 
+                                        MARRIAGE_COST, interaction.user.id)
+                    if interaction.user.id in active_proposals:
+                        del active_proposals[interaction.user.id]
+                    self.stop()
+                    return
+                
+                # Проверяем, не потратил ли отправитель зарезервированные монеты
+                # Если баланс меньше 0 - значит он потратил больше, чем у него было
+                if sender_row[0] < 0:
+                    await button_interaction.response.send_message(
+                        f"У отправителя недостаточно монет! Баланс: {sender_row[0]} монет. Необходимо: {MARRIAGE_COST} монет.",
+                        ephemeral=True
+                    )
+                    # Возвращаем зарезервированные монеты
+                    await cursor.execute('UPDATE user_profiles SET balance = balance + $1 WHERE user_id = $2', 
+                                        MARRIAGE_COST, interaction.user.id)
+                    if interaction.user.id in active_proposals:
+                        del active_proposals[interaction.user.id]
                     self.stop()
                     return
 
+                # Проверяем и создаём профиль получателя
+                result = await cursor.execute('SELECT balance FROM user_profiles WHERE user_id = $1', пользователь.id)
+                receiver_row = cursor.fetchone()
+                
+                if not receiver_row:
+                    await cursor.execute(
+                        'INSERT INTO user_profiles (user_id, balance, last_daily_claimed) VALUES ($1, $2, $3)',
+                        пользователь.id, 0, None
+                    )
+                    logger.info(f"Создан профиль для пользователя {пользователь.id} при принятии предложения")
+
+                # Проверяем брак повторно
+                await cursor.execute(
+                    'SELECT * FROM marriages WHERE user1_id = $1 OR user2_id = $1 OR user1_id = $2 OR user2_id = $2',
+                    interaction.user.id, пользователь.id
+                )
+                if cursor.fetchone():
+                    await button_interaction.response.send_message(
+                        "Кто-то из пользователей уже успел вступить в брак!", 
+                        ephemeral=True
+                    )
+                    # Возвращаем зарезервированные монеты
+                    await cursor.execute('UPDATE user_profiles SET balance = balance + $1 WHERE user_id = $2', 
+                                        MARRIAGE_COST, interaction.user.id)
+                    if interaction.user.id in active_proposals:
+                        del active_proposals[interaction.user.id]
+                    self.stop()
+                    return
+
+                # === СОЗДАЁМ БРАК ===
                 category = discord.utils.get(interaction.guild.categories, id=MARRIAGE_CATEGORY_ID)
                 if category is None:
                     logger.error(f"Marriage category {MARRIAGE_CATEGORY_ID} not found")
-                    await button_interaction.response.send_message("Категория для создания голосового канала не найдена.", ephemeral=True)
+                    await button_interaction.response.send_message(
+                        "Категория для создания голосового канала не найдена.", 
+                        ephemeral=True
+                    )
+                    await cursor.execute('UPDATE user_profiles SET balance = balance + $1 WHERE user_id = $2', 
+                                        MARRIAGE_COST, interaction.user.id)
+                    if interaction.user.id in active_proposals:
+                        del active_proposals[interaction.user.id]
                     self.stop()
                     return
 
@@ -894,8 +1028,12 @@ async def marry(interaction: discord.Interaction, пользователь: disc
                     VALUES ($1, $2, $3, $4, $5, $6, $7)
                 ''', interaction.user.id, пользователь.id, 0, created_at, created_at, expires_at, voice_channel.id)
 
-                await cursor.execute('UPDATE user_profiles SET balance = balance - $1 WHERE user_id = $2', 
-                                    MARRIAGE_COST, interaction.user.id)
+                # Монеты уже были списаны при отправке предложения, 
+                # поэтому НЕ списываем их повторно!
+
+                # Удаляем из активных предложений
+                if interaction.user.id in active_proposals:
+                    del active_proposals[interaction.user.id]
 
                 success_embed = discord.Embed(
                     title="Брак успешно зарегистрирован!",
@@ -903,28 +1041,54 @@ async def marry(interaction: discord.Interaction, пользователь: disc
                     color=discord.Color.from_rgb(110, 110, 110)
                 )
                 await self.message.edit(embed=success_embed, view=None)
+                
+                await button_interaction.response.send_message(
+                    "✅ Брак успешно заключён!", 
+                    ephemeral=True
+                )
                 self.stop()
 
             except Exception as e:
                 logger.error(f"Error in marriage creation: {str(e)}\n{traceback.format_exc()}")
-                error_message = "Произошла ошибка при создании брака. "
-                if "unique constraint" in str(e).lower():
-                    error_message += "Возможно, один из пользователей уже состоит в браке."
-                else:
-                    error_message += "Пожалуйста, попробуйте еще раз."
                 
-                await button_interaction.response.send_message(error_message, ephemeral=True)
+                # Откат при ошибке
+                try:
+                    await cursor.execute('UPDATE user_profiles SET balance = balance + $1 WHERE user_id = $2', 
+                                        MARRIAGE_COST, interaction.user.id)
+                    if interaction.user.id in active_proposals:
+                        del active_proposals[interaction.user.id]
+                except Exception as rollback_error:
+                    logger.error(f"Error rolling back: {rollback_error}")
+                
+                await button_interaction.response.send_message(
+                    "Произошла ошибка при создании брака. Пожалуйста, попробуйте еще раз.",
+                    ephemeral=True
+                )
                 self.stop()
 
         @discord.ui.button(label="Отклонить", style=discord.ButtonStyle.red)
         async def decline(self, button_interaction: discord.Interaction, button: discord.ui.Button):
+            if self.is_processed:
+                await button_interaction.response.send_message("Это предложение уже обработано!", ephemeral=True)
+                return
+                
             if button_interaction.user.id not in [пользователь.id, interaction.user.id]:
                 await button_interaction.response.send_message("Это не ваше предложение!", ephemeral=True)
                 return
 
-            # Возвращаем монеты отправителю при отказе
-            await cursor.execute('UPDATE user_profiles SET balance = balance + $1 WHERE user_id = $2', 
-                                MARRIAGE_COST, interaction.user.id)
+            self.is_processed = True
+            for child in self.children:
+                child.disabled = True
+            await self.message.edit(view=self)
+
+            # Возвращаем зарезервированные монеты
+            try:
+                await cursor.execute('UPDATE user_profiles SET balance = balance + $1 WHERE user_id = $2', 
+                                    MARRIAGE_COST, interaction.user.id)
+                if interaction.user.id in active_proposals:
+                    del active_proposals[interaction.user.id]
+            except Exception as e:
+                logger.error(f"Error returning coins on decline: {e}")
 
             if button_interaction.user.id == interaction.user.id:
                 decline_embed = discord.Embed(
@@ -944,11 +1108,19 @@ async def marry(interaction: discord.Interaction, пользователь: disc
         if not await check_basic_conditions():
             return
             
-        if not await check_balance():
+        if not await check_balance_and_profiles():
             return
             
         if not await check_marriage_status():
             return
+
+        # === РЕЗЕРВИРУЕМ МОНЕТЫ ===
+        # Списываем их сразу, чтобы предотвратить трату
+        await cursor.execute('UPDATE user_profiles SET balance = balance - $1 WHERE user_id = $2', 
+                            MARRIAGE_COST, interaction.user.id)
+        
+        # Добавляем в список активных предложений
+        active_proposals[interaction.user.id] = MARRIAGE_COST
 
         embed = discord.Embed(
             description=f"Сделал предложение {пользователь.mention}\nДля принятия нажмите на кнопку ниже.",
@@ -958,6 +1130,7 @@ async def marry(interaction: discord.Interaction, пользователь: disc
             name=f"Предложение руки и сердца - {interaction.user.name}",
             icon_url=interaction.user.avatar.url if interaction.user.avatar else interaction.user.default_avatar.url
         )
+        embed.set_footer(text="У вас есть 60 секунд на принятие решения")
 
         view = MarriageView()
         await interaction.response.send_message(embed=embed, view=view)
@@ -965,6 +1138,16 @@ async def marry(interaction: discord.Interaction, пользователь: disc
 
     except Exception as e:
         logger.error(f"Error in main relation flow: {str(e)}\n{traceback.format_exc()}")
+        
+        # Откат при любой ошибке
+        try:
+            await cursor.execute('UPDATE user_profiles SET balance = balance + $1 WHERE user_id = $2', 
+                                MARRIAGE_COST, interaction.user.id)
+            if interaction.user.id in active_proposals:
+                del active_proposals[interaction.user.id]
+        except Exception as rollback_error:
+            logger.error(f"Error rolling back in main flow: {rollback_error}")
+        
         await interaction.response.send_message("Произошла непредвиденная ошибка. Пожалуйста, попробуйте позже.", ephemeral=True)
 
 # ============================================
