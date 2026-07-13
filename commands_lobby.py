@@ -45,12 +45,12 @@ def setup_lobby_commands(bot, cursor):
             embed = Embed(color=0x6e6e6e)
             embed.set_author(name="Настройка умного лобби", icon_url=self.admin.display_avatar.url)
             embed.add_field(
-                name="<:voice:1337103709150248992> Канал назначения",
+                name="<:mice:1526013753110433872> Канал назначения",
                 value=self.selected_channel.mention if self.selected_channel else "не выбран",
                 inline=True
             )
             embed.add_field(
-                name="<:people:1337103698568020091> Участники",
+                name="<:people:1526013751457874033> Участники",
                 value="\n".join(u.mention for u in self.selected_users) if self.selected_users else "не выбраны",
                 inline=True
             )
@@ -88,7 +88,7 @@ def setup_lobby_commands(bot, cursor):
 
     class LobbyConfirmButton(Button):
         def __init__(self, parent_view: "LobbyManageView"):
-            super().__init__(label="Привязать", style=ButtonStyle.success, emoji="<:checkmark:1299081136013709352>")
+            super().__init__(label="Привязать", style=ButtonStyle.success, emoji="<:checkmark:1526013748718993428>")
             self.parent_view = parent_view
 
         async def callback(self, interaction: Interaction):
@@ -109,8 +109,8 @@ def setup_lobby_commands(bot, cursor):
 
             result_embed = Embed(color=0x6e6e6e)
             result_embed.set_author(name="Лобби настроено", icon_url=interaction.user.display_avatar.url)
-            result_embed.add_field(name="<:voice:1337103709150248992> Канал", value=channel.mention, inline=False)
-            result_embed.add_field(name="<:checkmark:1299081136013709352> Привязаны", value="\n".join(bound), inline=False)
+            result_embed.add_field(name="<:mice:1526013753110433872> Канал", value=channel.mention, inline=False)
+            result_embed.add_field(name="<:checkmark:1526013748718993428> Привязаны", value="\n".join(bound), inline=False)
 
             await interaction.response.edit_message(embed=result_embed, view=None)
 
@@ -193,9 +193,9 @@ def setup_lobby_commands(bot, cursor):
             embed = Embed(color=0x6e6e6e)
             embed.set_author(name="Привязки сняты", icon_url=self.parent_view.admin.display_avatar.url)
             if removed:
-                embed.add_field(name="<:checkmark:1299081136013709352> Сняты", value="\n".join(removed), inline=False)
+                embed.add_field(name="<:checkmark:1526013748718993428> Сняты", value="\n".join(removed), inline=False)
             if skipped:
-                embed.add_field(name="<:xxx:1299081147917008938> Пропущены", value="\n".join(skipped), inline=False)
+                embed.add_field(name="<:xrestik:1526013747112448090> Пропущены", value="\n".join(skipped), inline=False)
             await interaction.response.edit_message(embed=embed, view=None)
 
     # ==================== Обработчик ошибок для группы /lobby ====================
