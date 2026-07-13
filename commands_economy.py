@@ -1007,6 +1007,84 @@ def start_marriage_expiry_task(bot):
     check_marriage_expirations.start()
 
 # ============================================
+# АВТОУДАЛЕНИЕ ИСТЁКШИХ РОЛЕЙ
+# ============================================
+
+_role_task_started = False
+
+def start_role_expiry_task(bot):
+    """Запускает фоновую проверку истёкших кастомных ролей. Безопасно вызывать повторно — стартует только один раз."""
+    global _role_task_started
+    if _role_task_started:
+        return
+    _role_task_started = True
+
+    @tasks.loop(hours=1)
+    async def check_role_expirations():
+        global cursor
+        try:
+            await cursor.execute("SELECT role_name, expiration_date, archived, id_owner_now FROM roles")
+            rows = cursor.fetchall()
+        except Exception as e:
+            print(f"❌ Ошибка при чтении ролей для автопроверки: {e}")
+            return
+
+        now = datetime.now()
+
+        for role_name, expiration_date, archived, id_owner_now in rows:
+            # Архивированные роли не истекают — их отсчёт заморожен вручную владельцем
+            if archived or not expiration_date or expiration_date == '-':
+                continue
+
+            try:
+                expiration = datetime.strptime(expiration_date, "%d.%m.%Y в %Hч %Mм %Sс")
+            except (TypeError, ValueError):
+                continue
+
+            if expiration > now:
+                continue  # Роль ещё активна
+
+            # Ищем реальный объект роли на сервере
+            discord_role = None
+            for guild in bot.guilds:
+                discord_role = get(guild.roles, name=role_name)
+                if discord_role:
+                    break
+
+            if discord_role:
+                try:
+                    await discord_role.delete(reason="Автоматическое удаление: истёк срок действия роли")
+                except Exception as e:
+                    print(f"❌ Не удалось удалить роль '{role_name}' на сервере: {e}")
+
+            try:
+                await cursor.execute("DELETE FROM roles WHERE role_name = $1", role_name)
+                print(f"🗑️ Роль '{role_name}' автоматически удалена: истёк срок действия")
+            except Exception as e:
+                print(f"❌ Ошибка удаления роли '{role_name}' из БД: {e}")
+                continue
+
+            if id_owner_now:
+                owner = bot.get_user(id_owner_now)
+                if owner:
+                    try:
+                        await owner.send(embed=discord.Embed(
+                            description=(
+                                f"Ваша роль **{role_name}** была автоматически удалена: "
+                                "истёк срок действия, и она не была продлена или заархивирована вовремя."
+                            ),
+                            color=0x6e6e6e
+                        ))
+                    except Exception:
+                        pass  # Пользователь закрыл личные сообщения — не критично
+
+    @check_role_expirations.before_loop
+    async def before_check():
+        await bot.wait_until_ready()
+
+    check_role_expirations.start()
+
+# ============================================
 # SLOTS GROUP
 # ============================================
 
