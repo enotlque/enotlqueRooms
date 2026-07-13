@@ -807,24 +807,28 @@ async def marry(interaction: discord.Interaction, пользователь: disc
             
         return True
 
-    async def check_marriage_conditions():
+    async def check_balance():
+        result = await cursor.execute('SELECT balance FROM user_profiles WHERE user_id = $1', interaction.user.id)
+        row = cursor.fetchone()
+        if not row or row[0] < MARRIAGE_COST:
+            await interaction.response.send_message(f"У вас недостаточно монет! Необходимо {MARRIAGE_COST} монет.", ephemeral=True)
+            return False
+        return True
+
+    async def check_marriage_status():
         try:
-            result = await cursor.execute('SELECT balance FROM user_profiles WHERE user_id = $1', interaction.user.id)
-            row = cursor.fetchone()
-            if not row or row[0] < MARRIAGE_COST:
-                await interaction.response.send_message(f"У вас недостаточно монет! Необходимо {MARRIAGE_COST} монет.", ephemeral=True)
-                return False
-                
-            result = await cursor.execute('SELECT * FROM marriages WHERE user1_id = $1 OR user2_id = $1 OR user1_id = $2 OR user2_id = $2', 
-                                         interaction.user.id, interaction.user.id, пользователь.id, пользователь.id)
+            # Проверяем состоит ли кто-то из пользователей в браке
+            await cursor.execute(
+                'SELECT * FROM marriages WHERE user1_id = $1 OR user2_id = $1 OR user1_id = $2 OR user2_id = $2',
+                interaction.user.id, пользователь.id
+            )
             if cursor.fetchone():
                 await interaction.response.send_message("Один из пользователей уже состоит в браке!", ephemeral=True)
                 return False
-                
             return True
         except Exception as e:
-            logger.error(f"Error checking marriage conditions: {str(e)}\n{traceback.format_exc()}")
-            await interaction.response.send_message("Произошла ошибка при проверке условий брака.", ephemeral=True)
+            logger.error(f"Error checking marriage status: {str(e)}\n{traceback.format_exc()}")
+            await interaction.response.send_message("Произошла ошибка при проверке статуса брака.", ephemeral=True)
             return False
 
     class MarriageView(discord.ui.View):
@@ -845,6 +849,10 @@ async def marry(interaction: discord.Interaction, пользователь: disc
                 icon_url=sender_avatar
             )
             
+            # Возвращаем монеты отправителю
+            await cursor.execute('UPDATE user_profiles SET balance = balance + $1 WHERE user_id = $2', 
+                                MARRIAGE_COST, interaction.user.id)
+            
             await self.message.edit(embed=embed, view=None)
 
         @discord.ui.button(label="Принять", style=discord.ButtonStyle.green)
@@ -855,6 +863,7 @@ async def marry(interaction: discord.Interaction, пользователь: disc
                 return
 
             try:
+                # Проверяем баланс отправителя ещё раз
                 result = await cursor.execute('SELECT balance FROM user_profiles WHERE user_id = $1', interaction.user.id)
                 row = cursor.fetchone()
                 if not row or row[0] < MARRIAGE_COST:
@@ -885,7 +894,8 @@ async def marry(interaction: discord.Interaction, пользователь: disc
                     VALUES ($1, $2, $3, $4, $5, $6, $7)
                 ''', interaction.user.id, пользователь.id, 0, created_at, created_at, expires_at, voice_channel.id)
 
-                await cursor.execute('UPDATE user_profiles SET balance = balance - $1 WHERE user_id = $2', MARRIAGE_COST, interaction.user.id)
+                await cursor.execute('UPDATE user_profiles SET balance = balance - $1 WHERE user_id = $2', 
+                                    MARRIAGE_COST, interaction.user.id)
 
                 success_embed = discord.Embed(
                     title="Брак успешно зарегистрирован!",
@@ -912,6 +922,10 @@ async def marry(interaction: discord.Interaction, пользователь: disc
                 await button_interaction.response.send_message("Это не ваше предложение!", ephemeral=True)
                 return
 
+            # Возвращаем монеты отправителю при отказе
+            await cursor.execute('UPDATE user_profiles SET balance = balance + $1 WHERE user_id = $2', 
+                                MARRIAGE_COST, interaction.user.id)
+
             if button_interaction.user.id == interaction.user.id:
                 decline_embed = discord.Embed(
                     description=f"💔 {interaction.user.mention} отклонил собственное предложение руки и сердца {пользователь.mention}.",
@@ -927,7 +941,13 @@ async def marry(interaction: discord.Interaction, пользователь: disc
             self.stop()
 
     try:
-        if not await check_basic_conditions() or not await check_marriage_conditions():
+        if not await check_basic_conditions():
+            return
+            
+        if not await check_balance():
+            return
+            
+        if not await check_marriage_status():
             return
 
         embed = discord.Embed(
@@ -940,7 +960,7 @@ async def marry(interaction: discord.Interaction, пользователь: disc
         )
 
         view = MarriageView()
-        response = await interaction.response.send_message(embed=embed, view=view)
+        await interaction.response.send_message(embed=embed, view=view)
         view.message = await interaction.original_response()
 
     except Exception as e:
