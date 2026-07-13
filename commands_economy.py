@@ -329,7 +329,7 @@ async def create_profile_embed(cursor, user, guild):
         now = datetime.now(user.joined_at.tzinfo)
         days_on_server = str((now - user.joined_at).days)
     embed.add_field(name="Дней на сервере", value=f"```{days_on_server}```", inline=True)
-    embed.add_field(name="Целованный богом", value=f"```{god_kissed or '—'}```", inline=True)
+    embed.add_field(name="Комментарий админа", value=f"```{god_kissed or '—'}```", inline=True)
 
     result = await cursor.execute('SELECT user1_id, user2_id FROM marriages WHERE user1_id = $1 OR user2_id = $1', user.id)
     marriage_data = cursor.fetchone()
