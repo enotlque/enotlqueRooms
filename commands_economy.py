@@ -2099,6 +2099,7 @@ class DiceButton(Button):
             challenger_roll2 = random.randint(1, 20)
             challenger_total = challenger_roll1 + challenger_roll2
 
+            result_embed = discord.Embed(title="Результаты игры в кости", color=int("6e6e6e", 16))
             result_embed.set_author(name=f"Брошен вызов в кости - {self.author_name}",
                                      icon_url=interaction.guild.get_member(self.author_id).avatar.url)
 
@@ -2151,7 +2152,6 @@ class DiceButton(Button):
                                         f"<a:coinonrole:1298391257042784266> Чистый выигрыш: **{net_win}**\n"
                                         f"-# Комиссия: {rake}")
             result_note.set_image(url="https://i.postimg.cc/jdv5cp6v/1111-1.png")
-            
 
             view = View()
             button = DiceButton(self.ставка, self.author_id, self.author_name, self.target_user)
