@@ -280,8 +280,23 @@ async def transfer(interaction: discord.Interaction, пользователь: d
             color="#696969"
         ), ephemeral=True)
 
-@eco_group.command(name="top", description="Показать топ пользователей по монетам")
-async def top(interaction: discord.Interaction):
+# ============================================
+# TOP GROUP - Топы сервера
+# ============================================
+
+top_group = app_commands.Group(name="top", description="Топы сервера")
+
+def _top_rank_prefix(index: int) -> str:
+    if index == 1:
+        return "<:w1:1337129208819875912>"
+    elif index == 2:
+        return "<:w2:1337129278818750497>"
+    elif index == 3:
+        return "<:w3:1337129254755762237>"
+    return f"**{index})**"
+
+@top_group.command(name="coin", description="Показать топ пользователей по монетам")
+async def top_coin(interaction: discord.Interaction):
     global cursor
     result = await cursor.execute('SELECT user_id, balance FROM user_profiles ORDER BY balance DESC LIMIT 10')
     top_users = cursor.fetchall()
@@ -297,17 +312,33 @@ async def top(interaction: discord.Interaction):
     for index, (user_id, balance_amount) in enumerate(top_users, start=1):
         user = interaction.guild.get_member(user_id)
         if user:
-            if index == 1:
-                prefix = "<:w1:1337129208819875912>"
-            elif index == 2:
-                prefix = "<:w2:1337129278818750497>"
-            elif index == 3:
-                prefix = "<:w3:1337129254755762237>"
-            else:
-                prefix = f"**{index})**"
+            prefix = _top_rank_prefix(index)
             user_entries.append(f"{prefix} {user.mention} - **{balance_amount}** <:wwaluta:1337129761956167751>")
 
-    embed.add_field(name="", value="\n".join(user_entries), inline=False)
+    embed.add_field(name="", value="\n".join(user_entries) or "Нет данных.", inline=False)
+    await interaction.response.send_message(embed=embed)
+
+@top_group.command(name="role", description="Показать топ ролей по потраченным на них монетам")
+async def top_role(interaction: discord.Interaction):
+    global cursor
+    result = await cursor.execute('SELECT role_name, allcoinsend_on_role FROM roles ORDER BY allcoinsend_on_role DESC LIMIT 10')
+    top_roles = cursor.fetchall()
+
+    if not top_roles:
+        await interaction.response.send_message(embed=Embed(description="Нет данных.", color=0x6e6e6e))
+        return
+
+    embed = Embed(color=0x6e6e6e)
+    embed.set_author(name="Топ ролей по потраченным монетам", icon_url=interaction.user.avatar.url if interaction.user.avatar else None)
+
+    role_entries = []
+    for index, (role_name, allcoinsend_on_role) in enumerate(top_roles, start=1):
+        role = get(interaction.guild.roles, name=role_name)
+        role_display = role.mention if role else f"**{role_name}**"
+        prefix = _top_rank_prefix(index)
+        role_entries.append(f"{prefix} {role_display} - **{allcoinsend_on_role}** <a:coinonrole:1298391257042784266>")
+
+    embed.add_field(name="", value="\n".join(role_entries) or "Нет данных.", inline=False)
     await interaction.response.send_message(embed=embed)
 
 # ============================================
@@ -1087,6 +1118,111 @@ def start_role_expiry_task(bot):
         await bot.wait_until_ready()
 
     check_role_expirations.start()
+
+# ============================================
+# ОЧИСТКА БД ПРИ РУЧНОМ УДАЛЕНИИ РОЛИ
+# ============================================
+
+_role_delete_listener_started = False
+
+def setup_role_delete_listener(bot):
+    """Слушает удаление роли на сервере (в т.ч. вручную через настройки Discord)
+    и убирает её запись из БД, если это была кастомная роль системы экономики.
+    Безопасно вызывать повторно — регистрируется только один раз."""
+    global _role_delete_listener_started
+    if _role_delete_listener_started:
+        return
+    _role_delete_listener_started = True
+
+    async def on_guild_role_delete(role: discord.Role):
+        global cursor
+        try:
+            result = await cursor.execute("SELECT id_owner_now FROM roles WHERE role_name = $1", role.name)
+            row = cursor.fetchone()
+        except Exception as e:
+            print(f"❌ Ошибка при проверке удалённой роли '{role.name}' в БД: {e}")
+            return
+
+        if not row:
+            return  # роль не относится к нашей системе кастомных ролей
+
+        id_owner_now = row[0]
+
+        try:
+            await cursor.execute("DELETE FROM roles WHERE role_name = $1", role.name)
+            print(f"🗑️ Роль '{role.name}' удалена вручную на сервере — запись в БД удалена")
+        except Exception as e:
+            print(f"❌ Ошибка удаления роли '{role.name}' из БД после ручного удаления: {e}")
+            return
+
+        if id_owner_now:
+            owner = role.guild.get_member(id_owner_now) or bot.get_user(id_owner_now)
+            if owner:
+                try:
+                    await owner.send(embed=discord.Embed(
+                        description=(
+                            f"Ваша роль **{role.name}** была удалена вручную на сервере, "
+                            "и запись о ней удалена из базы данных."
+                        ),
+                        color=0x6e6e6e
+                    ))
+                except Exception:
+                    pass  # Пользователь закрыл личные сообщения — не критично
+
+    bot.add_listener(on_guild_role_delete, "on_guild_role_delete")
+
+async def reconcile_deleted_roles(bot):
+    """Разовая сверка при старте бота: убирает из БД записи о ролях, которые
+    были физически удалены на сервере, пока бот был выключен (в т.ч. заархивированные,
+    для которых нет автопроверки истечения). Вызывать один раз в on_ready после init_db()."""
+    global cursor
+    try:
+        await cursor.execute("SELECT role_name, id_owner_now FROM roles")
+        rows = cursor.fetchall()
+    except Exception as e:
+        print(f"❌ Ошибка при чтении ролей для сверки при старте: {e}")
+        return
+
+    if not rows:
+        return
+
+    for role_name, id_owner_now in rows:
+        discord_role = None
+        target_guild = None
+        for guild in bot.guilds:
+            discord_role = get(guild.roles, name=role_name)
+            if discord_role:
+                target_guild = guild
+                break
+
+        if discord_role:
+            continue  # роль на месте, всё в порядке
+
+        try:
+            await cursor.execute("DELETE FROM roles WHERE role_name = $1", role_name)
+            print(f"🗑️ Роль '{role_name}' удалена из БД при сверке на старте: физически отсутствует на сервере")
+        except Exception as e:
+            print(f"❌ Ошибка удаления роли '{role_name}' из БД при сверке на старте: {e}")
+            continue
+
+        if id_owner_now:
+            owner = None
+            for guild in bot.guilds:
+                owner = guild.get_member(id_owner_now)
+                if owner:
+                    break
+            owner = owner or bot.get_user(id_owner_now)
+            if owner:
+                try:
+                    await owner.send(embed=discord.Embed(
+                        description=(
+                            f"Ваша роль **{role_name}** была удалена вручную на сервере, "
+                            "и запись о ней удалена из базы данных."
+                        ),
+                        color=0x6e6e6e
+                    ))
+                except Exception:
+                    pass  # Пользователь закрыл личные сообщения — не критично
 
 # ============================================
 # SLOTS GROUP
