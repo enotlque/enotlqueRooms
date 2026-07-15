@@ -81,7 +81,7 @@ def setup_staff_commands(bot, cursor):
             return
 
         embed = base_log_embed(участник, "Новая блокировка", interaction.user)
-        embed.add_field(name="<:xrestik:1526013747112448090> Причина", value=причина, inline=False)
+        embed.add_field(name="<:information:1337130197262270535> Причина", value=причина, inline=False)
         await log_channel.send(embed=embed)
 
     # ==================== /staff mercy ====================
