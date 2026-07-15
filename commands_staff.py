@@ -37,13 +37,13 @@ def setup_staff_commands(bot, cursor):
         embed.set_author(name=title)
         embed.set_thumbnail(url=target.display_avatar.url)
         embed.add_field(
-            name="<:people:1526013751457874033> Участник",
+            name="<:efblockuser:1526958205270229112> Участник",
             value=f"{target.mention}\n`{target.name}` • `{target.id}`",
             inline=True
         )
         if moderator is not None:
             embed.add_field(
-                name="<:4elovekww:1337141385530445886> Модератор",
+                name="<:efuser:1526958203802489045> Модератор",
                 value=moderator.mention,
                 inline=True
             )
@@ -84,7 +84,7 @@ def setup_staff_commands(bot, cursor):
             return
 
         embed = base_log_embed(участник, "Новая блокировка", interaction.user)
-        embed.add_field(name="<:information:1337130197262270535> Причина", value=причина, inline=False)
+        embed.add_field(name="<:efchat:1526958967786311821> Причина", value=причина, inline=False)
         await log_channel.send(embed=embed)
 
     # ==================== /staff mercy ====================
@@ -127,7 +127,7 @@ def setup_staff_commands(bot, cursor):
             return
 
         embed = base_log_embed(участник, "Завершение амнистии", interaction.user)
-        embed.add_field(name="<:information:1337130197262270535> Причина", value=причина, inline=False)
+        embed.add_field(name="<:efchat:1526958967786311821> Причина", value=причина, inline=False)
         await log_channel.send(embed=embed)
 
     # ==================== /staff info ====================
@@ -225,13 +225,13 @@ def setup_staff_commands(bot, cursor):
             
             if moderator:
                 embed.add_field(
-                    name="Способ",
+                    name="<:eflupa:1526959553072205906> Способ",
                     value="Ручная выдача",
                     inline=False
                 )
             else:
                 embed.add_field(
-                    name="Способ",
+                    name="<:eflupa:1526959553072205906> Способ",
                     value="Через журнал аудита",
                     inline=False
                 )
@@ -259,13 +259,13 @@ def setup_staff_commands(bot, cursor):
             
             if moderator:
                 embed.add_field(
-                    name="Способ",
+                    name="<:eflupa:1526959553072205906> Способ",
                     value="Ручное снятие",
                     inline=False
                 )
             else:
                 embed.add_field(
-                    name="Способ",
+                    name="<:eflupa:1526959553072205906> Способ",
                     value="Через журнал аудита",
                     inline=False
                 )
@@ -276,12 +276,12 @@ def setup_staff_commands(bot, cursor):
         if AMNESTY_ROLE_ID in after_role_ids and AMNESTY_ROLE_ID not in before_role_ids:
             embed = base_log_embed(after, "Начало амнистии", None)
             embed.add_field(
-                name="<:watchw:1337130049123389500> Срок",
+                name="<:efcalendar:1526958208726470837> Срок",
                 value="14 дней",
                 inline=True
             )
             embed.add_field(
-                name="Статус",
+                name="<:efanounce:1526959942450413761> Статус",
                 value="Активна",
                 inline=False
             )
@@ -309,29 +309,29 @@ def setup_staff_commands(bot, cursor):
             
             if moderator and moderator.id == BOT_ID:
                 embed.add_field(
-                    name="Статус",
-                    value="<:galochka:1337141373446651955>Успешно завершена",
+                    name="<:efanounce:1526959942450413761> Статус",
+                    value="<:efmarked:1526958201969311835> Успешно завершена",
                     inline=False
                 )
             elif moderator:
                 embed.add_field(
-                    name="Статус",
-                    value="<:krestic:1337141359286550618>Досрочно завершена",
+                    name="<:efanounce:1526959942450413761> Статус",
+                    value="<:efwarning:1526958200870666290> Досрочно завершена",
                     inline=False
                 )
                 embed.add_field(
-                    name="Способ",
+                    name="<:eflupa:1526959553072205906> Способ",
                     value="Ручное снятие",
                     inline=False
                 )
             else:
                 embed.add_field(
-                    name="Статус",
-                    value="<:krestic:1337141359286550618>Досрочно завершена",
+                    name="<:efanounce:1526959942450413761> Статус",
+                    value="<:efwarning:1526958200870666290> Досрочно завершена",
                     inline=False
                 )
                 embed.add_field(
-                    name="Способ",
+                    name="<:eflupa:1526959553072205906> Способ",
                     value="Через журнал аудита",
                     inline=False
                 )
