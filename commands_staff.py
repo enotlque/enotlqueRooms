@@ -44,7 +44,7 @@ def setup_staff_commands(bot, cursor):
         )
         if moderator is not None:
             embed.add_field(
-                name="<:checkmark:1526013748718993428> Модератор",
+                name="<:othericonw:1337130091142058064> Модератор",
                 value=moderator.mention,
                 inline=True
             )
@@ -196,7 +196,7 @@ def setup_staff_commands(bot, cursor):
             return
 
         embed = base_log_embed(участник, "Период амнистии завершён досрочно", interaction.user)
-        embed.add_field(name="<:xrestik:1526013747112448090> Причина", value=причина, inline=False)
+        embed.add_field(name="<:information:1337130197262270535> Причина", value=причина, inline=False)
         await log_channel.send(embed=embed)
 
     # ==================== /staff info ====================
@@ -210,16 +210,28 @@ def setup_staff_commands(bot, cursor):
         embed.add_field(
             name="👑 Только Администрация",
             value=(
-                "`/staff channel` — Настроить канал для логов модерации.\n"
+                "`/staff channel` — Канал для логов модерации.\n"
+                "`/temp-role` `<@user|id> <@role> <1h52m1s>` — Выдать роль на время.\n"
+                "`/purge` — Очистка сообщений."
             ),
             inline=False
         )
         embed.add_field(
             name="🛡️ Администрация / Модерация",
             value=(
-                "`/staff ban` `<@user>` `<причина>` — Заблокировать участника.\n"
-                "`/staff mercy` `<@user>` `<причина>` — Снять роль периода амнистии.\n"
-                "`/staff info` — Список доступных команд модерации.\n"
+                "`/staff ban` `<@user> <причина>` — Заблокировать участника.\n"
+                "`/staff mercy` `<@user> <причина>` — Снять период амнистии.\n"
+                "`/staff info` — Список доступных команд."
+            ),
+            inline=False
+        )
+        embed.add_field(
+            name="🔧 Модерация",
+            value=(
+                "`/mute` `<@user|id> <1h52m1s> <причина>` — Временно заглушить.\n"
+                "`/strike` `14d (причина)` — Выдать пред на 14 дней.\n"
+                "`/strikes` — Список активных предупреждений.\n"
+                "`/pardon` — Снять предупреждение."
             ),
             inline=False
         )
@@ -256,13 +268,13 @@ def setup_staff_commands(bot, cursor):
             # поле "Модератор" здесь не указывается
             embed = base_log_embed(after, "Начался период амнистии")
             embed.add_field(
-                name="<:checkmark:1526013748718993428> Срок",
+                name="<:data:1337141473162039337> Срок",
                 value="14 дней",
                 inline=True
             )
             embed.add_field(
-                name="<:xrestik:1526013747112448090> Статус",
-                value="Участнику назначена роль периода амнистии на 14 дней.",
+                name="<:vremya:1337141252151447555> Статус",
+                value="Участнику назначен период амнистии на 14 дней.",
                 inline=False
             )
             await log_channel.send(embed=embed)
