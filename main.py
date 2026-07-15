@@ -123,15 +123,6 @@ async def init_db():
             ''')
             print("✅ Таблица lobby_bindings создана/проверена")
 
-            # Таблица настроек модерации (канал для логов /staff)
-            await conn.execute('''
-                CREATE TABLE IF NOT EXISTS staff_config (
-                    guild_id BIGINT PRIMARY KEY,
-                    log_channel_id BIGINT
-                )
-            ''')
-            print("✅ Таблица staff_config создана/проверена")
-
         finally:
             await conn.close()
     finally:
