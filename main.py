@@ -123,6 +123,15 @@ async def init_db():
             ''')
             print("✅ Таблица lobby_bindings создана/проверена")
 
+            # Таблица настроек модерации (канал для логов /staff)
+            await conn.execute('''
+                CREATE TABLE IF NOT EXISTS staff_config (
+                    guild_id BIGINT PRIMARY KEY,
+                    log_channel_id BIGINT
+                )
+            ''')
+            print("✅ Таблица staff_config создана/проверена")
+
         finally:
             await conn.close()
     finally:
@@ -162,7 +171,7 @@ conn = cursor
 
 # === ИМПОРТ И ПЕРЕДАЧА CURSOR В ЭКОНОМИЧЕСКИЙ МОДУЛЬ ===
 from commands_room import setup_room_commands
-from commands_admin import setup_admin_commands
+from commands_staff import setup_staff_commands
 from commands_lobby import setup_lobby_commands
 import commands_economy
 commands_economy.set_cursor(cursor)
@@ -193,7 +202,7 @@ bot.tree.add_command(withrole)
 bot.tree.add_command(duel)
 
 setup_room_commands(bot, cursor, CATEGORY_ID, restricted_role_id)
-setup_admin_commands(bot)
+setup_staff_commands(bot, cursor)
 setup_lobby_commands(bot, cursor)
 setup_role_delete_listener(bot)
 
