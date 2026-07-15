@@ -1,0 +1,272 @@
+import discord
+from discord import app_commands, Interaction, Embed, ButtonStyle
+from discord.ui import View, Button
+from datetime import datetime
+
+# === КОНСТАНТЫ ===
+BANNED_ROLE_ID = 1129742835487358989      # роль, выдаваемая при /staff ban
+AMNESTY_ROLE_ID = 1129103624870563950     # отслеживаемая роль (14 дней / период амнистии)
+MODERATOR_ROLE_ID = 1126902187675627552   # роль модератора
+
+DIVIDER_IMAGE = "https://i.postimg.cc/jdv5cp6v/1111-1.png"
+EMBED_COLOR = 0x6e6e6e
+
+
+def is_admin(interaction: discord.Interaction) -> bool:
+    return interaction.user.guild_permissions.administrator
+
+
+def is_staff(interaction: discord.Interaction) -> bool:
+    if interaction.user.guild_permissions.administrator:
+        return True
+    return any(role.id == MODERATOR_ROLE_ID for role in interaction.user.roles)
+
+
+def setup_staff_commands(bot, cursor):
+    staff_group = app_commands.Group(name="staff", description="Инструменты модерации сервера")
+
+    # ==================== helpers ====================
+
+    async def get_log_channel(guild: discord.Guild):
+        await cursor.execute('SELECT log_channel_id FROM staff_config WHERE guild_id = $1', guild.id)
+        row = cursor.fetchone()
+        if not row:
+            return None
+        return guild.get_channel(row[0])
+
+    def base_log_embed(target: discord.abc.User, title: str, moderator: discord.abc.User | None = None) -> Embed:
+        embed = Embed(color=EMBED_COLOR)
+        embed.set_author(name=title, icon_url=target.display_avatar.url)
+        embed.add_field(
+            name="<:people:1526013751457874033> Участник",
+            value=f"{target.mention}\n`{target.name}` • `{target.id}`",
+            inline=True
+        )
+        if moderator is not None:
+            embed.add_field(
+                name="<:checkmark:1526013748718993428> Модератор",
+                value=moderator.mention,
+                inline=True
+            )
+        embed.set_footer(text=datetime.now().strftime('%d.%m.%Y %H:%M'))
+        embed.set_image(url=DIVIDER_IMAGE)
+        return embed
+
+    # ==================== /staff channel ====================
+
+    @staff_group.command(name="channel", description="Настроить канал для логов модерации [Только для Администрации]")
+    @app_commands.check(is_admin)
+    async def staff_channel(interaction: Interaction):
+        view = StaffChannelView(interaction.user)
+        await interaction.response.send_message(embed=view.build_embed(), view=view, ephemeral=True)
+
+    class StaffChannelView(View):
+        def __init__(self, admin):
+            super().__init__(timeout=120)
+            self.admin = admin
+            self.selected_channel: discord.TextChannel | None = None
+
+            self.channel_select = StaffChannelSelect(self)
+            self.confirm_button = StaffChannelConfirmButton(self)
+
+            self.add_item(self.channel_select)
+            self.add_item(self.confirm_button)
+            self.confirm_button.disabled = True
+
+        def build_embed(self):
+            embed = Embed(color=EMBED_COLOR)
+            embed.set_author(name="Настройка логов модерации", icon_url=self.admin.display_avatar.url)
+            embed.add_field(
+                name="<:mice:1526013753110433872> Канал логов",
+                value=self.selected_channel.mention if self.selected_channel else "не выбран",
+                inline=True
+            )
+            embed.set_footer(text="Выберите канал, затем нажмите «Подтвердить»")
+            return embed
+
+    class StaffChannelSelect(discord.ui.ChannelSelect):
+        def __init__(self, parent_view: "StaffChannelView"):
+            super().__init__(
+                placeholder="Выберите текстовый канал для логов",
+                channel_types=[discord.ChannelType.text],
+                min_values=1,
+                max_values=1
+            )
+            self.parent_view = parent_view
+
+        async def callback(self, interaction: Interaction):
+            self.parent_view.selected_channel = self.values[0]
+            self.parent_view.confirm_button.disabled = False
+            await interaction.response.edit_message(embed=self.parent_view.build_embed(), view=self.parent_view)
+
+    class StaffChannelConfirmButton(Button):
+        def __init__(self, parent_view: "StaffChannelView"):
+            super().__init__(label="Подтвердить", style=ButtonStyle.success, emoji="<:checkmark:1526013748718993428>")
+            self.parent_view = parent_view
+
+        async def callback(self, interaction: Interaction):
+            channel = self.parent_view.selected_channel
+
+            await cursor.execute('''
+                INSERT INTO staff_config (guild_id, log_channel_id)
+                VALUES ($1, $2)
+                ON CONFLICT (guild_id) DO UPDATE SET
+                    log_channel_id = EXCLUDED.log_channel_id
+            ''', interaction.guild.id, channel.id)
+
+            result_embed = Embed(color=EMBED_COLOR)
+            result_embed.set_author(name="Канал логов сохранён", icon_url=interaction.user.display_avatar.url)
+            result_embed.add_field(name="<:mice:1526013753110433872> Канал", value=channel.mention, inline=False)
+
+            await interaction.response.edit_message(embed=result_embed, view=None)
+
+    # ==================== /staff ban ====================
+
+    @staff_group.command(name="ban", description="Заблокировать участника [Администрация / Модерация]")
+    @app_commands.describe(участник="Кого заблокировать", причина="Причина блокировки")
+    @app_commands.check(is_staff)
+    async def staff_ban(interaction: Interaction, участник: discord.Member, причина: str):
+        role = interaction.guild.get_role(BANNED_ROLE_ID)
+        if role is None:
+            await interaction.response.send_message(
+                embed=Embed(description="Роль блокировки не найдена на сервере.", color=EMBED_COLOR),
+                ephemeral=True
+            )
+            return
+
+        try:
+            await участник.add_roles(role, reason=f"/staff ban by {interaction.user}: {причина}")
+        except discord.Forbidden:
+            await interaction.response.send_message(
+                embed=Embed(description="Недостаточно прав, чтобы выдать роль блокировки.", color=EMBED_COLOR),
+                ephemeral=True
+            )
+            return
+
+        await interaction.response.send_message(
+            embed=Embed(description=f"{участник.mention} заблокирован(а).", color=EMBED_COLOR),
+            ephemeral=True
+        )
+
+        log_channel = await get_log_channel(interaction.guild)
+        if log_channel is None:
+            return
+
+        embed = base_log_embed(участник, "Новая блокировка", interaction.user)
+        embed.add_field(name="<:xrestik:1526013747112448090> Причина", value=причина, inline=False)
+        await log_channel.send(embed=embed)
+
+    # ==================== /staff mercy ====================
+
+    @staff_group.command(name="mercy", description="Снять роль периода амнистии с участника [Администрация / Модерация]")
+    @app_commands.describe(участник="С кого снять роль", причина="Причина снятия")
+    @app_commands.check(is_staff)
+    async def staff_mercy(interaction: Interaction, участник: discord.Member, причина: str):
+        role = interaction.guild.get_role(AMNESTY_ROLE_ID)
+        if role is None:
+            await interaction.response.send_message(
+                embed=Embed(description="Роль периода амнистии не найдена на сервере.", color=EMBED_COLOR),
+                ephemeral=True
+            )
+            return
+
+        if role not in участник.roles:
+            await interaction.response.send_message(
+                embed=Embed(description=f"У {участник.mention} нет данной роли.", color=EMBED_COLOR),
+                ephemeral=True
+            )
+            return
+
+        try:
+            await участник.remove_roles(role, reason=f"/staff mercy by {interaction.user}: {причина}")
+        except discord.Forbidden:
+            await interaction.response.send_message(
+                embed=Embed(description="Недостаточно прав, чтобы снять роль.", color=EMBED_COLOR),
+                ephemeral=True
+            )
+            return
+
+        await interaction.response.send_message(
+            embed=Embed(description=f"Роль периода амнистии снята с {участник.mention}.", color=EMBED_COLOR),
+            ephemeral=True
+        )
+
+        log_channel = await get_log_channel(interaction.guild)
+        if log_channel is None:
+            return
+
+        embed = base_log_embed(участник, "Период амнистии завершён досрочно", interaction.user)
+        embed.add_field(name="<:xrestik:1526013747112448090> Причина", value=причина, inline=False)
+        await log_channel.send(embed=embed)
+
+    # ==================== /staff info ====================
+
+    @staff_group.command(name="info", description="Список доступных команд модерации")
+    @app_commands.check(is_staff)
+    async def staff_info(interaction: Interaction):
+        embed = Embed(color=EMBED_COLOR)
+        embed.set_author(name="Доступные команды", icon_url=interaction.user.display_avatar.url)
+
+        embed.add_field(
+            name="👑 Только Администрация",
+            value=(
+                "`/staff channel` — Настроить канал для логов модерации.\n"
+            ),
+            inline=False
+        )
+        embed.add_field(
+            name="🛡️ Администрация / Модерация",
+            value=(
+                "`/staff ban` `<@user>` `<причина>` — Заблокировать участника.\n"
+                "`/staff mercy` `<@user>` `<причина>` — Снять роль периода амнистии.\n"
+                "`/staff info` — Список доступных команд модерации.\n"
+            ),
+            inline=False
+        )
+        embed.set_footer(text="Обязательно ознакомьтесь с правилами модерации")
+        embed.set_image(url=DIVIDER_IMAGE)
+
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    # ==================== Обработчик ошибок для группы /staff ====================
+
+    @staff_group.error
+    async def staff_error_handler(interaction: Interaction, error: app_commands.AppCommandError):
+        if isinstance(error, app_commands.CheckFailure):
+            await interaction.response.send_message(
+                embed=Embed(description="У вас недостаточно прав для использования этой команды!", color=EMBED_COLOR),
+                ephemeral=True
+            )
+        else:
+            raise error
+
+    # ==================== Отслеживание выдачи роли периода амнистии ====================
+
+    async def on_member_update(before: discord.Member, after: discord.Member):
+        before_role_ids = {r.id for r in before.roles}
+        after_role_ids = {r.id for r in after.roles}
+
+        # Интересует только момент, когда роль периода амнистии ПОЯВЛЯЕТСЯ
+        if AMNESTY_ROLE_ID in after_role_ids and AMNESTY_ROLE_ID not in before_role_ids:
+            log_channel = await get_log_channel(after.guild)
+            if log_channel is None:
+                return
+
+            # Роль может быть выдана вручную (не через команду бота), поэтому
+            # поле "Модератор" здесь не указывается
+            embed = base_log_embed(after, "Начался период амнистии")
+            embed.add_field(
+                name="<:checkmark:1526013748718993428> Срок",
+                value="14 дней",
+                inline=True
+            )
+            embed.add_field(
+                name="<:xrestik:1526013747112448090> Статус",
+                value="Участнику назначена роль периода амнистии на 14 дней.",
+                inline=False
+            )
+            await log_channel.send(embed=embed)
+
+    bot.add_listener(on_member_update, 'on_member_update')
+
+    bot.tree.add_command(staff_group)
