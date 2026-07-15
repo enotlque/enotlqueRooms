@@ -182,13 +182,17 @@ def setup_staff_commands(bot, cursor):
 
     # ==================== Отслеживание изменений ролей через журнал аудита ====================
 
-    async def get_audit_log_entry(guild: discord.Guild, target: discord.Member, action_type: discord.AuditLogAction, limit: int = 5):
+    async def get_audit_log_entry(guild: discord.Guild, target: discord.Member, action_type: discord.AuditLogAction, limit: int = 10):
         """Получить последнюю запись аудита для целевого пользователя и действия"""
         try:
             async for entry in guild.audit_logs(action=action_type, limit=limit):
                 if entry.target.id == target.id:
                     return entry
         except discord.Forbidden:
+            print(f"❌ Нет прав на просмотр журнала аудита на сервере {guild.id}")
+            return None
+        except Exception as e:
+            print(f"❌ Ошибка при получении аудита: {e}")
             return None
         return None
 
@@ -208,13 +212,18 @@ def setup_staff_commands(bot, cursor):
             reason = "Не указана"
             
             if entry:
-                if entry.changes.before.roles and entry.changes.after.roles:
-                    before_roles = {r.id for r in entry.changes.before.roles}
-                    after_roles = {r.id for r in entry.changes.after.roles}
-                    if BANNED_ROLE_ID in after_roles and BANNED_ROLE_ID not in before_roles:
-                        moderator = entry.user
-                        if entry.reason:
-                            reason = entry.reason
+                # Проверяем изменения ролей в аудите
+                if hasattr(entry, 'changes') and entry.changes:
+                    try:
+                        if hasattr(entry.changes, 'before') and hasattr(entry.changes, 'after'):
+                            before_roles = {r.id for r in entry.changes.before.roles} if entry.changes.before and hasattr(entry.changes.before, 'roles') else set()
+                            after_roles = {r.id for r in entry.changes.after.roles} if entry.changes.after and hasattr(entry.changes.after, 'roles') else set()
+                            if BANNED_ROLE_ID in after_roles and BANNED_ROLE_ID not in before_roles:
+                                moderator = entry.user
+                                if entry.reason:
+                                    reason = entry.reason
+                    except Exception as e:
+                        print(f"❌ Ошибка при разборе аудита: {e}")
             
             embed = base_log_embed(after, "Новая блокировка", moderator)
             
@@ -223,7 +232,7 @@ def setup_staff_commands(bot, cursor):
             else:
                 embed.add_field(
                     name="<:information:1337130197262270535> Причина",
-                    value="*Причина не указана в журнале аудита*",
+                    value="*—*",
                     inline=False
                 )
                 embed.add_field(
@@ -242,13 +251,17 @@ def setup_staff_commands(bot, cursor):
             reason = "Не указана"
             
             if entry:
-                if entry.changes.before.roles and entry.changes.after.roles:
-                    before_roles = {r.id for r in entry.changes.before.roles}
-                    after_roles = {r.id for r in entry.changes.after.roles}
-                    if BANNED_ROLE_ID in before_roles and BANNED_ROLE_ID not in after_roles:
-                        moderator = entry.user
-                        if entry.reason:
-                            reason = entry.reason
+                if hasattr(entry, 'changes') and entry.changes:
+                    try:
+                        if hasattr(entry.changes, 'before') and hasattr(entry.changes, 'after'):
+                            before_roles = {r.id for r in entry.changes.before.roles} if entry.changes.before and hasattr(entry.changes.before, 'roles') else set()
+                            after_roles = {r.id for r in entry.changes.after.roles} if entry.changes.after and hasattr(entry.changes.after, 'roles') else set()
+                            if BANNED_ROLE_ID in before_roles and BANNED_ROLE_ID not in after_roles:
+                                moderator = entry.user
+                                if entry.reason:
+                                    reason = entry.reason
+                    except Exception as e:
+                        print(f"❌ Ошибка при разборе аудита: {e}")
             
             embed = base_log_embed(after, "Разбан", moderator)
             
@@ -257,7 +270,7 @@ def setup_staff_commands(bot, cursor):
             else:
                 embed.add_field(
                     name="<:information:1337130197262270535> Причина",
-                    value="*Причина не указана в журнале аудита*",
+                    value="*—*",
                     inline=False
                 )
                 embed.add_field(
@@ -275,11 +288,15 @@ def setup_staff_commands(bot, cursor):
             moderator = None
             
             if entry:
-                if entry.changes.before.roles and entry.changes.after.roles:
-                    before_roles = {r.id for r in entry.changes.before.roles}
-                    after_roles = {r.id for r in entry.changes.after.roles}
-                    if AMNESTY_ROLE_ID in after_roles and AMNESTY_ROLE_ID not in before_roles:
-                        moderator = entry.user
+                if hasattr(entry, 'changes') and entry.changes:
+                    try:
+                        if hasattr(entry.changes, 'before') and hasattr(entry.changes, 'after'):
+                            before_roles = {r.id for r in entry.changes.before.roles} if entry.changes.before and hasattr(entry.changes.before, 'roles') else set()
+                            after_roles = {r.id for r in entry.changes.after.roles} if entry.changes.after and hasattr(entry.changes.after, 'roles') else set()
+                            if AMNESTY_ROLE_ID in after_roles and AMNESTY_ROLE_ID not in before_roles:
+                                moderator = entry.user
+                    except Exception as e:
+                        print(f"❌ Ошибка при разборе аудита: {e}")
             
             embed = base_log_embed(after, "Начался период амнистии", moderator)
             embed.add_field(
@@ -309,19 +326,23 @@ def setup_staff_commands(bot, cursor):
             moderator = None
             
             if entry:
-                if entry.changes.before.roles and entry.changes.after.roles:
-                    before_roles = {r.id for r in entry.changes.before.roles}
-                    after_roles = {r.id for r in entry.changes.after.roles}
-                    if AMNESTY_ROLE_ID in before_roles and AMNESTY_ROLE_ID not in after_roles:
-                        moderator = entry.user
+                if hasattr(entry, 'changes') and entry.changes:
+                    try:
+                        if hasattr(entry.changes, 'before') and hasattr(entry.changes, 'after'):
+                            before_roles = {r.id for r in entry.changes.before.roles} if entry.changes.before and hasattr(entry.changes.before, 'roles') else set()
+                            after_roles = {r.id for r in entry.changes.after.roles} if entry.changes.after and hasattr(entry.changes.after, 'roles') else set()
+                            if AMNESTY_ROLE_ID in before_roles and AMNESTY_ROLE_ID not in after_roles:
+                                moderator = entry.user
+                    except Exception as e:
+                        print(f"❌ Ошибка при разборе аудита: {e}")
             
             embed = base_log_embed(after, "Период амнистии завершён", moderator)
             
             if moderator:
-                if moderator.id == bot.user.id:  # Используем bot.user.id напрямую
+                if moderator.id == bot.user.id:
                     embed.add_field(
                         name="<:vremya:1337141252151447555> Статус",
-                        value="Амнистия успешно завершена (автоматическое снятие)",
+                        value="Амнистия успешно завершена",
                         inline=False
                     )
                 else:
