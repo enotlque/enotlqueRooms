@@ -1,12 +1,12 @@
 import discord
-from discord import app_commands, Interaction, Embed, ButtonStyle
-from discord.ui import View, Button
+from discord import app_commands, Interaction, Embed
 from datetime import datetime
 
 # === КОНСТАНТЫ ===
 BANNED_ROLE_ID = 1129742835487358989      # роль, выдаваемая при /staff ban
 AMNESTY_ROLE_ID = 1129103624870563950     # отслеживаемая роль (14 дней / период амнистии)
 MODERATOR_ROLE_ID = 1126902187675627552   # роль модератора
+LOG_CHANNEL_ID = 1526748291830775961      # канал для логов модерации
 
 DIVIDER_IMAGE = "https://i.postimg.cc/jdv5cp6v/1111-1.png"
 EMBED_COLOR = 0x6e6e6e
@@ -28,11 +28,7 @@ def setup_staff_commands(bot, cursor):
     # ==================== helpers ====================
 
     async def get_log_channel(guild: discord.Guild):
-        await cursor.execute('SELECT log_channel_id FROM staff_config WHERE guild_id = $1', guild.id)
-        row = cursor.fetchone()
-        if not row:
-            return None
-        return guild.get_channel(row[0])
+        return guild.get_channel(LOG_CHANNEL_ID)
 
     def base_log_embed(target: discord.abc.User, title: str, moderator: discord.abc.User | None = None) -> Embed:
         embed = Embed(color=EMBED_COLOR)
@@ -51,74 +47,6 @@ def setup_staff_commands(bot, cursor):
         embed.set_footer(text=datetime.now().strftime('%d.%m.%Y %H:%M'))
         embed.set_image(url=DIVIDER_IMAGE)
         return embed
-
-    # ==================== /staff channel ====================
-
-    @staff_group.command(name="channel", description="Настроить канал для логов модерации [Только для Администрации]")
-    @app_commands.check(is_admin)
-    async def staff_channel(interaction: Interaction):
-        view = StaffChannelView(interaction.user)
-        await interaction.response.send_message(embed=view.build_embed(), view=view, ephemeral=True)
-
-    class StaffChannelView(View):
-        def __init__(self, admin):
-            super().__init__(timeout=120)
-            self.admin = admin
-            self.selected_channel: discord.TextChannel | None = None
-
-            self.channel_select = StaffChannelSelect(self)
-            self.confirm_button = StaffChannelConfirmButton(self)
-
-            self.add_item(self.channel_select)
-            self.add_item(self.confirm_button)
-            self.confirm_button.disabled = True
-
-        def build_embed(self):
-            embed = Embed(color=EMBED_COLOR)
-            embed.set_author(name="Настройка логов модерации", icon_url=self.admin.display_avatar.url)
-            embed.add_field(
-                name="<:mice:1526013753110433872> Канал логов",
-                value=self.selected_channel.mention if self.selected_channel else "не выбран",
-                inline=True
-            )
-            embed.set_footer(text="Выберите канал, затем нажмите «Подтвердить»")
-            return embed
-
-    class StaffChannelSelect(discord.ui.ChannelSelect):
-        def __init__(self, parent_view: "StaffChannelView"):
-            super().__init__(
-                placeholder="Выберите текстовый канал для логов",
-                channel_types=[discord.ChannelType.text],
-                min_values=1,
-                max_values=1
-            )
-            self.parent_view = parent_view
-
-        async def callback(self, interaction: Interaction):
-            self.parent_view.selected_channel = self.values[0]
-            self.parent_view.confirm_button.disabled = False
-            await interaction.response.edit_message(embed=self.parent_view.build_embed(), view=self.parent_view)
-
-    class StaffChannelConfirmButton(Button):
-        def __init__(self, parent_view: "StaffChannelView"):
-            super().__init__(label="Подтвердить", style=ButtonStyle.success, emoji="<:checkmark:1526013748718993428>")
-            self.parent_view = parent_view
-
-        async def callback(self, interaction: Interaction):
-            channel = self.parent_view.selected_channel
-
-            await cursor.execute('''
-                INSERT INTO staff_config (guild_id, log_channel_id)
-                VALUES ($1, $2)
-                ON CONFLICT (guild_id) DO UPDATE SET
-                    log_channel_id = EXCLUDED.log_channel_id
-            ''', interaction.guild.id, channel.id)
-
-            result_embed = Embed(color=EMBED_COLOR)
-            result_embed.set_author(name="Канал логов сохранён", icon_url=interaction.user.display_avatar.url)
-            result_embed.add_field(name="<:mice:1526013753110433872> Канал", value=channel.mention, inline=False)
-
-            await interaction.response.edit_message(embed=result_embed, view=None)
 
     # ==================== /staff ban ====================
 
@@ -210,7 +138,6 @@ def setup_staff_commands(bot, cursor):
         embed.add_field(
             name="👑 Только Администрация",
             value=(
-                "`/staff channel` — Канал для логов модерации.\n"
                 "`/temp-role` `<@user|id> <@role> <1h52m1s>` — Выдать роль на время.\n"
                 "`/purge` — Очистка сообщений."
             ),
