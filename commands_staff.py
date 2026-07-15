@@ -11,6 +11,7 @@ LOG_CHANNEL_ID = 1526748291830775961      # канал для логов мод�
 
 DIVIDER_IMAGE = "https://i.postimg.cc/jdv5cp6v/1111-1.png"
 EMBED_COLOR = 0x6e6e6e
+BOT_ID = 708616355024207884
 
 
 def is_admin(interaction: discord.Interaction) -> bool:
@@ -33,7 +34,8 @@ def setup_staff_commands(bot, cursor):
 
     def base_log_embed(target: discord.abc.User, title: str, moderator: discord.abc.User | None = None) -> Embed:
         embed = Embed(color=EMBED_COLOR)
-        embed.set_author(name=title, icon_url=target.display_avatar.url)
+        embed.set_author(name=title)
+        embed.set_thumbnail(url=target.display_avatar.url)
         embed.add_field(
             name="<:people:1526013751457874033> Участник",
             value=f"{target.mention}\n`{target.name}` • `{target.id}`",
@@ -41,7 +43,7 @@ def setup_staff_commands(bot, cursor):
         )
         if moderator is not None:
             embed.add_field(
-                name="<:othericonw:1337130091142058064> Модератор",
+                name="<:4elovekww:1337141385530445886> Модератор",
                 value=moderator.mention,
                 inline=True
             )
@@ -124,7 +126,7 @@ def setup_staff_commands(bot, cursor):
         if log_channel is None:
             return
 
-        embed = base_log_embed(участник, "Период амнистии завершён досрочно", interaction.user)
+        embed = base_log_embed(участник, "Завершение амнистии", interaction.user)
         embed.add_field(name="<:information:1337130197262270535> Причина", value=причина, inline=False)
         await log_channel.send(embed=embed)
 
@@ -189,10 +191,8 @@ def setup_staff_commands(bot, cursor):
                 if entry.target.id == target.id:
                     return entry
         except discord.Forbidden:
-            print(f"❌ Нет прав на просмотр журнала аудита на сервере {guild.id}")
             return None
-        except Exception as e:
-            print(f"❌ Ошибка при получении аудита: {e}")
+        except Exception:
             return None
         return None
 
@@ -209,10 +209,8 @@ def setup_staff_commands(bot, cursor):
             entry = await get_audit_log_entry(after.guild, after, discord.AuditLogAction.member_role_update)
             
             moderator = None
-            reason = "Не указана"
             
             if entry:
-                # Проверяем изменения ролей в аудите
                 if hasattr(entry, 'changes') and entry.changes:
                     try:
                         if hasattr(entry.changes, 'before') and hasattr(entry.changes, 'after'):
@@ -220,24 +218,21 @@ def setup_staff_commands(bot, cursor):
                             after_roles = {r.id for r in entry.changes.after.roles} if entry.changes.after and hasattr(entry.changes.after, 'roles') else set()
                             if BANNED_ROLE_ID in after_roles and BANNED_ROLE_ID not in before_roles:
                                 moderator = entry.user
-                                if entry.reason:
-                                    reason = entry.reason
-                    except Exception as e:
-                        print(f"❌ Ошибка при разборе аудита: {e}")
+                    except Exception:
+                        pass
             
             embed = base_log_embed(after, "Новая блокировка", moderator)
             
             if moderator:
-                embed.add_field(name="<:information:1337130197262270535> Причина", value=reason, inline=False)
-            else:
                 embed.add_field(
-                    name="<:information:1337130197262270535> Причина",
-                    value="*—*",
+                    name="Способ",
+                    value="Ручная выдача",
                     inline=False
                 )
+            else:
                 embed.add_field(
-                    name="<:data:1337141473162039337> Способ",
-                    value="Роль выдана вручную (журнал аудита не доступен)",
+                    name="Способ",
+                    value="Через журнал аудита",
                     inline=False
                 )
             
@@ -248,7 +243,6 @@ def setup_staff_commands(bot, cursor):
             entry = await get_audit_log_entry(after.guild, after, discord.AuditLogAction.member_role_update)
             
             moderator = None
-            reason = "Не указана"
             
             if entry:
                 if hasattr(entry, 'changes') and entry.changes:
@@ -258,24 +252,21 @@ def setup_staff_commands(bot, cursor):
                             after_roles = {r.id for r in entry.changes.after.roles} if entry.changes.after and hasattr(entry.changes.after, 'roles') else set()
                             if BANNED_ROLE_ID in before_roles and BANNED_ROLE_ID not in after_roles:
                                 moderator = entry.user
-                                if entry.reason:
-                                    reason = entry.reason
-                    except Exception as e:
-                        print(f"❌ Ошибка при разборе аудита: {e}")
+                    except Exception:
+                        pass
             
             embed = base_log_embed(after, "Разбан", moderator)
             
             if moderator:
-                embed.add_field(name="<:information:1337130197262270535> Причина", value=reason, inline=False)
-            else:
                 embed.add_field(
-                    name="<:information:1337130197262270535> Причина",
-                    value="*—*",
+                    name="Способ",
+                    value="Ручное снятие",
                     inline=False
                 )
+            else:
                 embed.add_field(
-                    name="<:data:1337141473162039337> Способ",
-                    value="Роль снята вручную (журнал аудита не доступен)",
+                    name="Способ",
+                    value="Через журнал аудита",
                     inline=False
                 )
             
@@ -283,39 +274,17 @@ def setup_staff_commands(bot, cursor):
 
         # === ВЫДАЧА РОЛИ АМНИСТИИ ===
         if AMNESTY_ROLE_ID in after_role_ids and AMNESTY_ROLE_ID not in before_role_ids:
-            entry = await get_audit_log_entry(after.guild, after, discord.AuditLogAction.member_role_update)
-            
-            moderator = None
-            
-            if entry:
-                if hasattr(entry, 'changes') and entry.changes:
-                    try:
-                        if hasattr(entry.changes, 'before') and hasattr(entry.changes, 'after'):
-                            before_roles = {r.id for r in entry.changes.before.roles} if entry.changes.before and hasattr(entry.changes.before, 'roles') else set()
-                            after_roles = {r.id for r in entry.changes.after.roles} if entry.changes.after and hasattr(entry.changes.after, 'roles') else set()
-                            if AMNESTY_ROLE_ID in after_roles and AMNESTY_ROLE_ID not in before_roles:
-                                moderator = entry.user
-                    except Exception as e:
-                        print(f"❌ Ошибка при разборе аудита: {e}")
-            
-            embed = base_log_embed(after, "Начался период амнистии", moderator)
+            embed = base_log_embed(after, "Начало амнистии", None)
             embed.add_field(
-                name="<:data:1337141473162039337> Срок",
+                name="<:watchw:1337130049123389500> Срок",
                 value="14 дней",
                 inline=True
             )
             embed.add_field(
-                name="<:vremya:1337141252151447555> Статус",
-                value="Участнику назначен период амнистии на 14 дней.",
+                name="Статус",
+                value="Активна",
                 inline=False
             )
-            
-            if not moderator:
-                embed.add_field(
-                    name="<:data:1337141473162039337> Способ",
-                    value="Роль выдана вручную",
-                    inline=False
-                )
             
             await log_channel.send(embed=embed)
 
@@ -333,38 +302,37 @@ def setup_staff_commands(bot, cursor):
                             after_roles = {r.id for r in entry.changes.after.roles} if entry.changes.after and hasattr(entry.changes.after, 'roles') else set()
                             if AMNESTY_ROLE_ID in before_roles and AMNESTY_ROLE_ID not in after_roles:
                                 moderator = entry.user
-                    except Exception as e:
-                        print(f"❌ Ошибка при разборе аудита: {e}")
+                    except Exception:
+                        pass
             
-            embed = base_log_embed(after, "Период амнистии завершён", moderator)
+            embed = base_log_embed(after, "Завершение амнистии", moderator)
             
-            if moderator:
-                if moderator.id == bot.user.id:
-                    embed.add_field(
-                        name="<:vremya:1337141252151447555> Статус",
-                        value="Амнистия успешно завершена",
-                        inline=False
-                    )
-                else:
-                    embed.add_field(
-                        name="<:vremya:1337141252151447555> Статус",
-                        value="<:staffw:1337130060947128432> Амнистия завершена досрочно (ручное снятие)",
-                        inline=False
-                    )
-                    embed.add_field(
-                        name="<:data:1337141473162039337> Способ",
-                        value=f"Роль снята {moderator.mention} через журнал аудита",
-                        inline=False
-                    )
-            else:
+            if moderator and moderator.id == BOT_ID:
                 embed.add_field(
-                    name="<:vremya:1337141252151447555> Статус",
-                    value="<:staffw:1337130060947128432> Амнистия завершена (способ не определён)",
+                    name="Статус",
+                    value="<:galochka:1337141373446651955>Успешно завершена",
+                    inline=False
+                )
+            elif moderator:
+                embed.add_field(
+                    name="Статус",
+                    value="<:krestic:1337141359286550618>Досрочно завершена",
                     inline=False
                 )
                 embed.add_field(
-                    name="<:data:1337141473162039337> Способ",
-                    value="Роль снята вручную (журнал аудита не доступен)",
+                    name="Способ",
+                    value="Ручное снятие",
+                    inline=False
+                )
+            else:
+                embed.add_field(
+                    name="Статус",
+                    value="<:krestic:1337141359286550618>Досрочно завершена",
+                    inline=False
+                )
+                embed.add_field(
+                    name="Способ",
+                    value="Через журнал аудита",
                     inline=False
                 )
             
