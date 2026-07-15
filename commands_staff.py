@@ -13,6 +13,9 @@ DIVIDER_IMAGE = "https://i.postimg.cc/jdv5cp6v/1111-1.png"
 EMBED_COLOR = 0x6e6e6e
 BOT_ID = 708616355024207884
 
+# Глобальный флаг для отслеживания действий через команды бота
+bot_action_flag = False
+
 
 def is_admin(interaction: discord.Interaction) -> bool:
     return interaction.user.guild_permissions.administrator
@@ -25,6 +28,8 @@ def is_staff(interaction: discord.Interaction) -> bool:
 
 
 def setup_staff_commands(bot, cursor):
+    global bot_action_flag
+    
     staff_group = app_commands.Group(name="staff", description="Инструменты модерации сервера")
 
     # ==================== helpers ====================
@@ -57,6 +62,8 @@ def setup_staff_commands(bot, cursor):
     @app_commands.describe(участник="Кого заблокировать", причина="Причина блокировки")
     @app_commands.check(is_staff)
     async def staff_ban(interaction: Interaction, участник: discord.Member, причина: str):
+        global bot_action_flag
+        
         role = interaction.guild.get_role(BANNED_ROLE_ID)
         if role is None:
             await interaction.response.send_message(
@@ -66,13 +73,19 @@ def setup_staff_commands(bot, cursor):
             return
 
         try:
+            # Устанавливаем флаг перед изменением роли
+            bot_action_flag = True
             await участник.add_roles(role, reason=f"/staff ban by {interaction.user}: {причина}")
         except discord.Forbidden:
+            bot_action_flag = False
             await interaction.response.send_message(
                 embed=Embed(description="Недостаточно прав, чтобы выдать роль блокировки.", color=EMBED_COLOR),
                 ephemeral=True
             )
             return
+        finally:
+            # Сбрасываем флаг после выполнения
+            bot_action_flag = False
 
         await interaction.response.send_message(
             embed=Embed(description=f"{участник.mention} заблокирован(а).", color=EMBED_COLOR),
@@ -93,6 +106,8 @@ def setup_staff_commands(bot, cursor):
     @app_commands.describe(участник="С кого снять роль", причина="Причина снятия")
     @app_commands.check(is_staff)
     async def staff_mercy(interaction: Interaction, участник: discord.Member, причина: str):
+        global bot_action_flag
+        
         role = interaction.guild.get_role(AMNESTY_ROLE_ID)
         if role is None:
             await interaction.response.send_message(
@@ -109,13 +124,19 @@ def setup_staff_commands(bot, cursor):
             return
 
         try:
+            # Устанавливаем флаг перед изменением роли
+            bot_action_flag = True
             await участник.remove_roles(role, reason=f"/staff mercy by {interaction.user}: {причина}")
         except discord.Forbidden:
+            bot_action_flag = False
             await interaction.response.send_message(
                 embed=Embed(description="Недостаточно прав, чтобы снять роль.", color=EMBED_COLOR),
                 ephemeral=True
             )
             return
+        finally:
+            # Сбрасываем флаг после выполнения
+            bot_action_flag = False
 
         await interaction.response.send_message(
             embed=Embed(description=f"Роль периода амнистии снята с {участник.mention}.", color=EMBED_COLOR),
@@ -197,6 +218,12 @@ def setup_staff_commands(bot, cursor):
         return None
 
     async def on_member_update(before: discord.Member, after: discord.Member):
+        global bot_action_flag
+        
+        # Если действие было совершено через команду бота - пропускаем
+        if bot_action_flag:
+            return
+            
         before_role_ids = {r.id for r in before.roles}
         after_role_ids = {r.id for r in after.roles}
         
@@ -316,7 +343,7 @@ def setup_staff_commands(bot, cursor):
             elif moderator:
                 embed.add_field(
                     name="<:efanounce:1526959942450413761> Статус",
-                    value="<:efwarning:1526958200870666290> Досрочно завершена",
+                    value="Досрочно завершена",
                     inline=False
                 )
                 embed.add_field(
@@ -327,7 +354,7 @@ def setup_staff_commands(bot, cursor):
             else:
                 embed.add_field(
                     name="<:efanounce:1526959942450413761> Статус",
-                    value="<:efwarning:1526958200870666290> Досрочно завершена",
+                    value="Досрочно завершена",
                     inline=False
                 )
                 embed.add_field(
