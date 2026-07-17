@@ -77,6 +77,10 @@ async def init_db():
                     god_kissed TEXT DEFAULT '—'
                 )
             ''')
+            # На случай, если таблица уже существовала до добавления команды /eco work
+            await conn.execute('''
+                ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS last_work_claimed TEXT
+            ''')
             print("✅ Таблица user_profiles создана/проверена")
             
             await conn.execute('''
