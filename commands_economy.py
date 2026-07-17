@@ -481,51 +481,84 @@ async def top_role(interaction: discord.Interaction):
 # PROFILE COMMAND - /me
 # ============================================
 
+async def get_server_badge(days_on_server: int) -> str:
+    """Возвращает автоматический значок в зависимости от дней на сервере"""
+    if days_on_server >= 1460:  # 4 года
+        return "<:4year:1527481108806238288>"
+    elif days_on_server >= 1095:  # 3 года
+        return "<:3year:1527481100493000805>"
+    elif days_on_server >= 730:  # 2 года
+        return "<:2year:1527481098798632970>"
+    elif days_on_server >= 365:  # 1 год
+        return "<:1year:1527481110240432211>"
+    elif days_on_server >= 180:  # 6 месяцев
+        return "<:6month:1527481104192245820>"
+    elif days_on_server >= 90:   # 3 месяца
+        return "<:3month:1527481106599776286>"
+    elif days_on_server >= 30:   # 1 месяц
+        return "<:1month:1527481112501162107>"
+    elif days_on_server >= 7:    # 1 неделя
+        return "<:1week:1527481102271254559>"
+    else:
+        return "🆕"  # Новый пользователь
+
 async def create_profile_embed(cursor, user, guild):
-    result = await cursor.execute('SELECT balance, status, god_kissed FROM user_profiles WHERE user_id = $1', user.id)
+    """Создает embed профиля пользователя"""
+    result = await cursor.execute('SELECT balance, god_kissed, custom_badges FROM user_profiles WHERE user_id = $1', user.id)
     row = cursor.fetchone()
 
     if not row:
-        await cursor.execute('INSERT INTO user_profiles (user_id, balance) VALUES ($1, $2)', user.id, 0)
-        balance_amount, status, god_kissed = 0, "Статуса нет", "—"
+        # Создаем профиль с пустыми кастомными значками
+        await cursor.execute('INSERT INTO user_profiles (user_id, balance, custom_badges) VALUES ($1, $2, $3)', user.id, 0, '')
+        balance_amount, god_kissed, custom_badges = 0, "—", ""
     else:
-        balance_amount, status, god_kissed = row
+        balance_amount, god_kissed, custom_badges = row
 
     embed = discord.Embed(color=0x6e6e6e, title="", description="")
-    embed.add_field(name="Статус", value=f"```\n{status}\n```", inline=False)
-    embed.add_field(name="Баланс", value=f"```{balance_amount}```", inline=True)
-
-    days_on_server = "—"
+    
+    # Расчет дней на сервере для автоматического значка
+    days_on_server = 0
     if isinstance(user, discord.Member) and user.joined_at:
         now = datetime.now(user.joined_at.tzinfo)
-        days_on_server = str((now - user.joined_at).days)
-    embed.add_field(name="Дней на сервере", value=f"```{days_on_server}```", inline=True)
-    embed.add_field(name="Комментарий админа", value=f"```{god_kissed or '—'}```", inline=True)
+        days_on_server = (now - user.joined_at).days
+    
+    # Автоматический значок за стаж
+    auto_badge = get_server_badge(days_on_server)
+    
+    # Ручные значки из БД (просто строка с эмодзи, разделенная пробелами)
+    # Ты можешь написать туда что угодно, например:
+    # "<:cool:123456789> <:admin:987654321>" или просто ":heart: :star:"
+    custom_badges_list = custom_badges.split() if custom_badges else []
+    
+    # Собираем все значки: автоматический + ручные
+    all_badges = [auto_badge] + custom_badges_list
+    
+    # Показываем значки в профиле
+    embed.add_field(
+        name="<:znachki:1337134443902537769> Значки", 
+        value=" ".join(all_badges) if all_badges else "Нет значков",
+        inline=False
+    )
+    
+    embed.add_field(name="<a:coinonrole:1298391257042784266> Баланс", value=f"```{balance_amount}```", inline=True)
+    embed.add_field(name="<:calendar:1337130049123389500> Дней на сервере", value=f"```{days_on_server} дн.```", inline=True)
+    embed.add_field(name="<:admincomment:1337134443902537769> Комментарий админа", value=f"```{god_kissed or '—'}```", inline=True)
 
+    # Проверка брака
     result = await cursor.execute('SELECT user1_id, user2_id FROM marriages WHERE user1_id = $1 OR user2_id = $1', user.id)
     marriage_data = cursor.fetchone()
     if marriage_data:
         partner_id = marriage_data[0] if marriage_data[1] == user.id else marriage_data[1]
-        partner = await guild.fetch_member(partner_id)
-        embed.add_field(name="Возлюбленные", value=f"```{partner.display_name}```", inline=False)
+        try:
+            partner = await guild.fetch_member(partner_id)
+            embed.add_field(name="<a:pinkpixelheart:1298391338223403008> Возлюбленные", value=f"```{partner.display_name}```", inline=False)
+        except discord.NotFound:
+            pass
 
     embed.set_author(name=f"Профиль - {user.display_name}", icon_url=user.avatar.url)
+    embed.set_footer(text="Нажмите на кнопку для управления браком")
     return embed
 
-class StatusModal(ui.Modal, title="Обновить статус"):
-    status_input = ui.TextInput(label="Введите новый статус", min_length=2, max_length=40)
-
-    async def on_submit(self, interaction: discord.Interaction):
-        global cursor
-        await cursor.execute('UPDATE user_profiles SET status = $1 WHERE user_id = $2', self.status_input.value, interaction.user.id)
-
-        await interaction.response.send_message(embed=discord.Embed(
-            description=f"Статус обновлен на: ```{self.status_input.value}```",
-            color=0x6e6e6e
-        ), ephemeral=True)
-
-        profile_embed = await create_profile_embed(cursor, interaction.user, interaction.guild)
-        await interaction.followup.edit_message(interaction.message.id, embed=profile_embed)
 
 @app_commands.command(name="me", description="Показать профиль пользователя")
 @app_commands.describe(пользователь="Участник, чей профиль вы хотите просмотреть")
@@ -536,22 +569,7 @@ async def me(interaction: discord.Interaction, пользователь: discord
 
     view = ui.View()
 
-    button_change_status = ui.Button(
-        label="Изменить статус", 
-        style=discord.ButtonStyle.secondary, 
-        emoji="<:whitepen:1337134443902537769>",
-        disabled=пользователь != interaction.user
-    )
-
-    async def change_status_callback(i: discord.Interaction):
-        if i.user == пользователь:
-            await i.response.send_modal(StatusModal())
-            updated_embed = await create_profile_embed(cursor, пользователь, i.guild)
-            await interaction.edit_original_response(embed=updated_embed, view=view)
-
-    button_change_status.callback = change_status_callback
-    view.add_item(button_change_status)
-
+    # Проверка брака
     result = await cursor.execute('SELECT * FROM marriages WHERE user1_id = $1 OR user2_id = $1', пользователь.id)
     has_marriage = cursor.fetchone() is not None
 
