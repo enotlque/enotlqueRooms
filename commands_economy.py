@@ -533,7 +533,7 @@ async def create_profile_embed(cursor, user, guild):
     
     # Показываем значки в профиле
     embed.add_field(
-        name="<:znachki:1337134443902537769> Значки", 
+        name="<:4year:1527490430554341516> <:rubyyyyy:1527493837486952538>Значки", 
         value=" ".join(all_badges) if all_badges else "Нет значков",
         inline=False
     )
