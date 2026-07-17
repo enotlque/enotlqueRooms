@@ -484,23 +484,23 @@ async def top_role(interaction: discord.Interaction):
 def get_server_badge(days_on_server: int) -> str:  # Убираем async
     """Возвращает автоматический значок в зависимости от дней на сервере"""
     if days_on_server >= 1460:  # 4 года
-        return "<:4year:1527481108806238288>"
+        return "<:4year:1527490430554341516>"
     elif days_on_server >= 1095:  # 3 года
-        return "<:3year:1527481100493000805>"
+        return "<:3year:1527491358867066950>"
     elif days_on_server >= 730:  # 2 года
-        return "<:2year:1527481098798632970>"
+        return "<:2year:1527490432165220372>"
     elif days_on_server >= 365:  # 1 год
-        return "<:1year:1527481110240432211>"
+        return "<:1year:1527490433956053173>"
     elif days_on_server >= 180:  # 6 месяцев
-        return "<:6month:1527481104192245820>"
+        return "<:6month:1527490435826581574>"
     elif days_on_server >= 90:   # 3 месяца
-        return "<:3month:1527481106599776286>"
+        return "<:3month:1527489499096027156>"
     elif days_on_server >= 30:   # 1 месяц
-        return "<:1month:1527481112501162107>"
+        return "<:1month:1527490439274434661>"
     elif days_on_server >= 7:    # 1 неделя
-        return "<:1week:1527481102271254559>"
+        return "<:1week:1527490440897499186>"
     else:
-        return "🆕"  # Новый пользователь
+        return "<:mariostar:1299059050746609684>"  # Новый пользователь
 
 async def create_profile_embed(cursor, user, guild):
     """Создает embed профиля пользователя"""
@@ -538,9 +538,9 @@ async def create_profile_embed(cursor, user, guild):
         inline=False
     )
     
-    embed.add_field(name="<a:coinonrole:1298391257042784266> Баланс", value=f"```{balance_amount}```", inline=True)
-    embed.add_field(name="<:calendar:1337130049123389500> Дней на сервере", value=f"```{days_on_server} дн.```", inline=True)
-    embed.add_field(name="<:admincomment:1337134443902537769> Комментарий админа", value=f"```{god_kissed or '—'}```", inline=True)
+    embed.add_field(name="Баланс", value=f"```{balance_amount}```", inline=True)
+    embed.add_field(name="Дней на сервере", value=f"```{days_on_server}```", inline=True)
+    embed.add_field(name="Комментарий админа", value=f"```{god_kissed or '—'}```", inline=True)
 
     # Проверка брака
     result = await cursor.execute('SELECT user1_id, user2_id FROM marriages WHERE user1_id = $1 OR user2_id = $1', user.id)
