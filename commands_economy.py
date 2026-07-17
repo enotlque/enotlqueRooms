@@ -477,67 +477,71 @@ async def top_role(interaction: discord.Interaction):
     await interaction.response.send_message(embed=view.render_embed(), view=view)
     view.message = await interaction.original_response()
 
+@top_group.command(name="hours", description="Показать топ пользователей по часам в войсе")
+async def top_hours(interaction: discord.Interaction):
+    global cursor
+    result = await cursor.execute(f'SELECT user_id, voice_hours FROM user_profiles ORDER BY voice_hours DESC LIMIT {TOP_FETCH_LIMIT}')
+    top_users = cursor.fetchall()
+
+    if not top_users:
+        await interaction.response.send_message(embed=Embed(description="Нет данных.", color=0x6e6e6e))
+        return
+
+    user_entries = []
+    index = 0
+    for user_id, hours in top_users:
+        user = interaction.guild.get_member(user_id)
+        if not user or not hours:
+            continue
+        index += 1
+        prefix = _top_rank_prefix(index)
+        user_entries.append(f"{prefix} {user.mention} - **{float(hours):.1f}ч**")
+
+    if not user_entries:
+        await interaction.response.send_message(embed=Embed(description="Нет данных.", color=0x6e6e6e))
+        return
+
+    icon_url = interaction.user.avatar.url if interaction.user.avatar else None
+    view = TopPaginatorView("Топ пользователей по часам в войсе", icon_url, user_entries, interaction.user.id)
+    await interaction.response.send_message(embed=view.render_embed(), view=view)
+    view.message = await interaction.original_response()
+
 # ============================================
 # PROFILE COMMAND - /me
 # ============================================
 
-def get_server_badge(days_on_server: int) -> str:  # Убираем async
-    """Возвращает автоматический значок в зависимости от дней на сервере"""
-    if days_on_server >= 1460:  # 4 года
-        return "<:platinum:1527580484119564348>"
-    elif days_on_server >= 1095:  # 3 года
-        return "<:3year:1527491358867066950>"
-    elif days_on_server >= 730:  # 2 года
-        return "<:2year:1527490432165220372>"
-    elif days_on_server >= 365:  # 1 год
-        return "<:1year:1527490433956053173>"
-    elif days_on_server >= 180:  # 6 месяцев
-        return "<:6month:1527490435826581574>"
-    elif days_on_server >= 90:   # 3 месяца
-        return "<:3month:1527489499096027156>"
-    elif days_on_server >= 30:   # 1 месяц
-        return "<:1month:1527490439274434661>"
-    elif days_on_server >= 7:    # 1 неделя
-        return "<:1week:1527490440897499186>"
-    else:
-        return "<:mariostar:1299059050746609684>"  # Новый пользователь
-
 async def create_profile_embed(cursor, user, guild):
     """Создает embed профиля пользователя"""
-    result = await cursor.execute('SELECT balance, god_kissed, custom_badges FROM user_profiles WHERE user_id = $1', user.id)
+    result = await cursor.execute(
+        'SELECT balance, god_kissed, voice_hours, messages_count FROM user_profiles WHERE user_id = $1',
+        user.id
+    )
     row = cursor.fetchone()
 
     if not row:
-        # Создаем профиль с пустыми кастомными значками
-        await cursor.execute('INSERT INTO user_profiles (user_id, balance, custom_badges) VALUES ($1, $2, $3)', user.id, 0, '')
-        balance_amount, god_kissed, custom_badges = 0, "—", ""
+        await cursor.execute(
+            'INSERT INTO user_profiles (user_id, balance) VALUES ($1, $2)', user.id, 0
+        )
+        balance_amount, god_kissed, voice_hours, messages_count = 0, "—", 0, 0
     else:
-        balance_amount, god_kissed, custom_badges = row
+        balance_amount, god_kissed, voice_hours, messages_count = row
+        voice_hours = voice_hours or 0
+        messages_count = messages_count or 0
 
     embed = discord.Embed(color=0x6e6e6e, title="", description="")
-    
-    # Расчет дней на сервере для автоматического значка
+
+    # Расчет дней на сервере
     days_on_server = 0
     if isinstance(user, discord.Member) and user.joined_at:
         now = datetime.now(user.joined_at.tzinfo)
         days_on_server = (now - user.joined_at).days
-    
-    # Автоматический значок за стаж (теперь без await)
-    auto_badge = get_server_badge(days_on_server)
-    
-    # Ручные значки из БД (просто строка с эмодзи, разделенная пробелами)
-    custom_badges_list = custom_badges.split() if custom_badges else []
-    
-    # Собираем все значки: автоматический + ручные
-    all_badges = [auto_badge] + custom_badges_list
-    
-    # Показываем значки в профиле
+
     embed.add_field(
-        name="<:platinum:1527580484119564348>Значки", 
-        value=" ".join(all_badges) if all_badges else "Нет значков",
+        name="⏱️ Активность",
+        value=f"```{float(voice_hours):.1f}ч в войсе | {messages_count} сообщ.```",
         inline=False
     )
-    
+
     embed.add_field(name="Баланс", value=f"```{balance_amount}```", inline=True)
     embed.add_field(name="Дней на сервере", value=f"```{days_on_server}```", inline=True)
     embed.add_field(name="Комментарий админа", value=f"```{god_kissed or '—'}```", inline=True)
