@@ -481,7 +481,7 @@ async def top_role(interaction: discord.Interaction):
 # PROFILE COMMAND - /me
 # ============================================
 
-async def get_server_badge(days_on_server: int) -> str:
+def get_server_badge(days_on_server: int) -> str:  # Убираем async
     """Возвращает автоматический значок в зависимости от дней на сервере"""
     if days_on_server >= 1460:  # 4 года
         return "<:4year:1527481108806238288>"
@@ -522,12 +522,10 @@ async def create_profile_embed(cursor, user, guild):
         now = datetime.now(user.joined_at.tzinfo)
         days_on_server = (now - user.joined_at).days
     
-    # Автоматический значок за стаж
+    # Автоматический значок за стаж (теперь без await)
     auto_badge = get_server_badge(days_on_server)
     
     # Ручные значки из БД (просто строка с эмодзи, разделенная пробелами)
-    # Ты можешь написать туда что угодно, например:
-    # "<:cool:123456789> <:admin:987654321>" или просто ":heart: :star:"
     custom_badges_list = custom_badges.split() if custom_badges else []
     
     # Собираем все значки: автоматический + ручные
