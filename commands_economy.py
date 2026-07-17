@@ -484,7 +484,7 @@ async def top_role(interaction: discord.Interaction):
 def get_server_badge(days_on_server: int) -> str:  # Убираем async
     """Возвращает автоматический значок в зависимости от дней на сервере"""
     if days_on_server >= 1460:  # 4 года
-        return "<:4year:1527490430554341516>"
+        return "<:platinum:1527580484119564348>"
     elif days_on_server >= 1095:  # 3 года
         return "<:3year:1527491358867066950>"
     elif days_on_server >= 730:  # 2 года
@@ -533,7 +533,7 @@ async def create_profile_embed(cursor, user, guild):
     
     # Показываем значки в профиле
     embed.add_field(
-        name="<:4year:1527490430554341516> <:rubyyyyy:1527493837486952538>Значки", 
+        name="<:platinum:1527580484119564348>Значки", 
         value=" ".join(all_badges) if all_badges else "Нет значков",
         inline=False
     )
