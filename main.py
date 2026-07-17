@@ -73,13 +73,10 @@ async def init_db():
                     user_id BIGINT PRIMARY KEY,
                     balance INTEGER DEFAULT 0,
                     last_daily_claimed TEXT,
-                    status TEXT DEFAULT 'Статуса нет',
-                    god_kissed TEXT DEFAULT '—'
+                    last_work_claimed TEXT,
+                    god_kissed TEXT DEFAULT '—',
+                    custom_badges TEXT DEFAULT ''
                 )
-            ''')
-            # На случай, если таблица уже существовала до добавления команды /eco work
-            await conn.execute('''
-                ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS last_work_claimed TEXT
             ''')
             print("✅ Таблица user_profiles создана/проверена")
             
