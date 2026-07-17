@@ -75,9 +75,15 @@ async def init_db():
                     last_daily_claimed TEXT,
                     last_work_claimed TEXT,
                     god_kissed TEXT DEFAULT '—',
-                    custom_badges TEXT DEFAULT ''
+                    voice_hours NUMERIC DEFAULT 0,
+                    messages_count INTEGER DEFAULT 0
                 )
             ''')
+            # На случай, если таблица уже существовала до этого обновления -
+            # безопасно (идемпотентно) добавляем новые колонки и убираем старую.
+            await conn.execute('ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS voice_hours NUMERIC DEFAULT 0')
+            await conn.execute('ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS messages_count INTEGER DEFAULT 0')
+            await conn.execute('ALTER TABLE user_profiles DROP COLUMN IF EXISTS custom_badges')
             print("✅ Таблица user_profiles создана/проверена")
             
             await conn.execute('''
@@ -165,6 +171,7 @@ conn = cursor
 from commands_room import setup_room_commands
 from commands_staff import setup_staff_commands
 from commands_lobby import setup_lobby_commands
+from commands_activity import setup_activity_tracking
 import commands_economy
 commands_economy.set_cursor(cursor)
 
@@ -196,6 +203,7 @@ bot.tree.add_command(duel)
 setup_room_commands(bot, cursor, CATEGORY_ID, restricted_role_id)
 setup_staff_commands(bot, cursor)
 setup_lobby_commands(bot, cursor)
+setup_activity_tracking(bot, cursor, get_db_connection)
 setup_role_delete_listener(bot)
 
 @bot.event
