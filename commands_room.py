@@ -38,7 +38,13 @@ def setup_room_commands(bot, cursor, CATEGORY_ID, restricted_role_id):
         embed.add_field(name="<:mice:1526013753110433872> Комната", value=parent_view.room_name, inline=True)
         embed.add_field(name="<:people:1526013751457874033> Участников", value=str(parent_view.member_count), inline=True)
 
-        await parent_view.original_message.edit(embed=embed, view=parent_view)
+        try:
+            await parent_view.original_message.edit(embed=embed, view=parent_view)
+        except (discord.NotFound, discord.HTTPException):
+            # Панель ephemeral — редактирование через webhook-токен доступно ~15 минут
+            # после открытия /room manage. Если панель открыта дольше, обновление
+            # счётчика молча пропускается: владельцу нужно переоткрыть /room manage.
+            pass
 
     # owner_role_id -> set(member_id) с активным (ещё не принятым/не отклонённым/не истекшим) приглашением
     MAX_PENDING_INVITES = 10
@@ -204,7 +210,7 @@ def setup_room_commands(bot, cursor, CATEGORY_ID, restricted_role_id):
         if not rooms:
             embed = Embed(description="<a:writing:1526019043083948232> На данный момент комнат не обнаружено", color=0x000000)
             if new_message:
-                await interaction.response.send_message(embed=embed)
+                await interaction.response.send_message(embed=embed, ephemeral=True)
             else:
                 await interaction.edit_original_response(embed=embed, view=None)
             return
@@ -231,7 +237,7 @@ def setup_room_commands(bot, cursor, CATEGORY_ID, restricted_role_id):
 
         view = RoomListView(offset, total_rooms, total_pages)
         if new_message:
-            await interaction.response.send_message(embed=embed, view=view)
+            await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
         else:
             await interaction.edit_original_response(embed=embed, view=view)
 
@@ -475,7 +481,7 @@ def setup_room_commands(bot, cursor, CATEGORY_ID, restricted_role_id):
             interaction=interaction
         )
 
-        await interaction.response.send_message(embed=embed, view=view)
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
         view.original_message = await interaction.original_response()
 
     class InitialView(View):
@@ -1141,6 +1147,11 @@ def setup_room_commands(bot, cursor, CATEGORY_ID, restricted_role_id):
             embed.add_field(name="<:mice:1526013753110433872> Комната", value=self.parent_view.room_name, inline=True)
             embed.add_field(name="<:people:1526013751457874033> Участников", value=str(self.parent_view.member_count), inline=True)
 
-            await self.parent_view.original_message.edit(embed=embed, view=self.parent_view)
+            try:
+                await self.parent_view.original_message.edit(embed=embed, view=self.parent_view)
+            except (discord.NotFound, discord.HTTPException):
+                # См. комментарий в update_manage_message — панель ephemeral,
+                # редактирование доступно только ~15 минут после /room manage.
+                pass
 
     bot.tree.add_command(room_group)
