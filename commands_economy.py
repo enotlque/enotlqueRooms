@@ -92,12 +92,12 @@ async def balance(interaction: discord.Interaction, пользователь: di
         color="#696969",
         author_name=f"Баланс - {пользователь.display_name}",
         author_icon_url=пользователь.avatar.url
-    ).add_field(name="Монет", value=f"```\n{balance_amount}\n```", inline=False))
+    ).add_field(name="Монет", value=f"```\n{balance_amount}\n```", inline=False), ephemeral=True)
 
-@eco_group.command(name="daily", description="Получить ежедневный бонус (каждые 12 часов)")
+@eco_group.command(name="daily", description="Получить ежедневный бонус (каждые 24 часа)")
 async def daily(interaction: discord.Interaction):
-    BONUS_AMOUNT = 30
-    COOLDOWN_HOURS = 12
+    BONUS_AMOUNT = 75
+    COOLDOWN_HOURS = 24
     global cursor
 
     result = await cursor.execute('SELECT last_daily_claimed, balance FROM user_profiles WHERE user_id = $1', interaction.user.id)
@@ -128,7 +128,7 @@ async def daily(interaction: discord.Interaction):
             color="#6e6e6e",
             author_name=f"Бонус - {interaction.user.display_name}",
             author_icon_url=interaction.user.avatar.url,
-            footer="Возвращайтесь через 12 часов"
+            footer="Возвращайтесь через 24 часа"
         ))
     else:
         await cursor.execute('INSERT INTO user_profiles (user_id, balance, last_daily_claimed) VALUES ($1, $2, $3)', 
@@ -137,6 +137,55 @@ async def daily(interaction: discord.Interaction):
             description=f"Вы забрали: {BONUS_AMOUNT} <a:coinonrole:1298391257042784266>",
             color="#6e6e6e",
             author_name=f"Бонус - {interaction.user.display_name}",
+            author_icon_url=interaction.user.avatar.url,
+            footer="Возвращайтесь через 24 часа"
+        ))
+
+@eco_group.command(name="work", description="Поработать и получить монеты (каждые 12 часов)")
+async def work(interaction: discord.Interaction):
+    MIN_AMOUNT = 45
+    MAX_AMOUNT = 75
+    COOLDOWN_HOURS = 12
+    global cursor
+
+    result = await cursor.execute('SELECT last_work_claimed, balance FROM user_profiles WHERE user_id = $1', interaction.user.id)
+    row = cursor.fetchone()
+
+    current_time = datetime.now()
+    earned = random.randint(MIN_AMOUNT, MAX_AMOUNT)
+
+    if row:
+        last_work_claimed, balance_amount = row
+        if last_work_claimed:
+            last_work_claimed = datetime.strptime(last_work_claimed, "%Y-%m-%d %H:%M:%S")
+            if current_time < last_work_claimed + timedelta(hours=COOLDOWN_HOURS):
+                next_claim_time = last_work_claimed + timedelta(hours=COOLDOWN_HOURS)
+                discord_time = f"<t:{int(next_claim_time.timestamp())}:R>"
+                await interaction.response.send_message(embed=create_embed(
+                    description=f"<:xx:1295095667617960018> Вы уже работали. В следующий раз сможете поработать {discord_time}.",
+                    color="#6e6e6e",
+                    author_name=f"Работа - {interaction.user.display_name}",
+                    author_icon_url=interaction.user.avatar.url
+                ))
+                return
+
+        new_balance = (balance_amount or 0) + earned
+        await cursor.execute('UPDATE user_profiles SET balance = $1, last_work_claimed = $2 WHERE user_id = $3', 
+                           new_balance, current_time.strftime("%Y-%m-%d %H:%M:%S"), interaction.user.id)
+        await interaction.response.send_message(embed=create_embed(
+            description=f"Вы заработали: {earned} <a:coinonrole:1298391257042784266>",
+            color="#6e6e6e",
+            author_name=f"Работа - {interaction.user.display_name}",
+            author_icon_url=interaction.user.avatar.url,
+            footer="Возвращайтесь через 12 часов"
+        ))
+    else:
+        await cursor.execute('INSERT INTO user_profiles (user_id, balance, last_work_claimed) VALUES ($1, $2, $3)', 
+                           interaction.user.id, earned, current_time.strftime("%Y-%m-%d %H:%M:%S"))
+        await interaction.response.send_message(embed=create_embed(
+            description=f"Вы заработали: {earned} <a:coinonrole:1298391257042784266>",
+            color="#6e6e6e",
+            author_name=f"Работа - {interaction.user.display_name}",
             author_icon_url=interaction.user.avatar.url,
             footer="Возвращайтесь через 12 часов"
         ))
@@ -273,7 +322,7 @@ async def transfer(interaction: discord.Interaction, пользователь: d
             color="#696969",
             author_name=f"Перевод монет - {interaction.user.display_name}",
             author_icon_url=interaction.user.avatar.url
-        ).set_footer(text="Комиссия 10%"))
+        ).set_footer(text="Комиссия 10%"), ephemeral=True)
     else:
         await interaction.response.send_message(embed=create_embed(
             description="Недостаточно средств для перевода.",
@@ -295,41 +344,126 @@ def _top_rank_prefix(index: int) -> str:
         return "<:w3:1337129254755762237>"
     return f"**{index})**"
 
+TOP_PAGE_SIZE = 10
+TOP_FETCH_LIMIT = 100  # сколько строк максимум тянем из БД для постраничного топа
+
+def _build_top_embed(title: str, icon_url, entries: list, offset: int, page_size: int):
+    embed = Embed(color=0x6e6e6e)
+    embed.set_author(name=title, icon_url=icon_url)
+    page_entries = entries[offset:offset + page_size]
+    embed.add_field(name="", value="\n".join(page_entries) or "Нет данных.", inline=False)
+    total_pages = max((len(entries) + page_size - 1) // page_size, 1)
+    embed.set_footer(text=f"Страница {offset // page_size + 1}/{total_pages}")
+    return embed
+
+class TopPaginatorView(ui.View):
+    """Постраничный просмотр топов с кнопками Назад / Удалить / Вперёд.
+    Сообщение остаётся видимым всем, но удалить его может только тот, кто вызвал команду."""
+
+    def __init__(self, title: str, icon_url, entries: list, owner_id: int, offset: int = 0, page_size: int = TOP_PAGE_SIZE):
+        super().__init__(timeout=180)
+        self.title = title
+        self.icon_url = icon_url
+        self.entries = entries
+        self.owner_id = owner_id
+        self.offset = offset
+        self.page_size = page_size
+        self.message = None
+        self.update_buttons()
+
+    def update_buttons(self):
+        self.clear_items()
+
+        back_button = ui.Button(label="Назад", style=discord.ButtonStyle.secondary, disabled=(self.offset == 0))
+        back_button.callback = self.go_back
+        self.add_item(back_button)
+
+        delete_button = ui.Button(label="Удалить", style=discord.ButtonStyle.danger)
+        delete_button.callback = self.delete_message
+        self.add_item(delete_button)
+
+        forward_button = ui.Button(label="Вперёд", style=discord.ButtonStyle.secondary, 
+                                    disabled=(self.offset + self.page_size >= len(self.entries)))
+        forward_button.callback = self.go_forward
+        self.add_item(forward_button)
+
+    def render_embed(self):
+        return _build_top_embed(self.title, self.icon_url, self.entries, self.offset, self.page_size)
+
+    async def go_back(self, interaction: discord.Interaction):
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message("Листать этот топ может только тот, кто его вызвал.", ephemeral=True)
+            return
+        self.offset = max(self.offset - self.page_size, 0)
+        self.update_buttons()
+        await interaction.response.edit_message(embed=self.render_embed(), view=self)
+
+    async def go_forward(self, interaction: discord.Interaction):
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message("Листать этот топ может только тот, кто его вызвал.", ephemeral=True)
+            return
+        self.offset = min(self.offset + self.page_size, max(len(self.entries) - self.page_size, 0))
+        self.update_buttons()
+        await interaction.response.edit_message(embed=self.render_embed(), view=self)
+
+    async def delete_message(self, interaction: discord.Interaction):
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message("Удалить это сообщение может только тот, кто вызвал команду.", ephemeral=True)
+            return
+        await interaction.response.defer()
+        try:
+            await interaction.delete_original_response()
+        except discord.NotFound:
+            pass
+        self.stop()
+
+    async def on_timeout(self):
+        if self.message:
+            try:
+                for item in self.children:
+                    item.disabled = True
+                await self.message.edit(view=self)
+            except Exception:
+                pass
+
 @top_group.command(name="coin", description="Показать топ пользователей по монетам")
 async def top_coin(interaction: discord.Interaction):
     global cursor
-    result = await cursor.execute('SELECT user_id, balance FROM user_profiles ORDER BY balance DESC LIMIT 10')
+    result = await cursor.execute(f'SELECT user_id, balance FROM user_profiles ORDER BY balance DESC LIMIT {TOP_FETCH_LIMIT}')
     top_users = cursor.fetchall()
 
     if not top_users:
         await interaction.response.send_message(embed=Embed(description="Нет данных.", color=0x6e6e6e))
         return
 
-    embed = Embed(color=0x6e6e6e)
-    embed.set_author(name="Топ пользователей по монетам", icon_url=interaction.user.avatar.url if interaction.user.avatar else None)
-
     user_entries = []
-    for index, (user_id, balance_amount) in enumerate(top_users, start=1):
+    index = 0
+    for user_id, balance_amount in top_users:
         user = interaction.guild.get_member(user_id)
-        if user:
-            prefix = _top_rank_prefix(index)
-            user_entries.append(f"{prefix} {user.mention} - **{balance_amount}** <:wwaluta:1337129761956167751>")
+        if not user:
+            continue
+        index += 1
+        prefix = _top_rank_prefix(index)
+        user_entries.append(f"{prefix} {user.mention} - **{balance_amount}** <:wwaluta:1337129761956167751>")
 
-    embed.add_field(name="", value="\n".join(user_entries) or "Нет данных.", inline=False)
-    await interaction.response.send_message(embed=embed)
+    if not user_entries:
+        await interaction.response.send_message(embed=Embed(description="Нет данных.", color=0x6e6e6e))
+        return
+
+    icon_url = interaction.user.avatar.url if interaction.user.avatar else None
+    view = TopPaginatorView("Топ пользователей по монетам", icon_url, user_entries, interaction.user.id)
+    await interaction.response.send_message(embed=view.render_embed(), view=view)
+    view.message = await interaction.original_response()
 
 @top_group.command(name="role", description="Показать топ ролей по потраченным на них монетам")
 async def top_role(interaction: discord.Interaction):
     global cursor
-    result = await cursor.execute('SELECT role_name, allcoinsend_on_role FROM roles ORDER BY allcoinsend_on_role DESC LIMIT 10')
+    result = await cursor.execute(f'SELECT role_name, allcoinsend_on_role FROM roles ORDER BY allcoinsend_on_role DESC LIMIT {TOP_FETCH_LIMIT}')
     top_roles = cursor.fetchall()
 
     if not top_roles:
         await interaction.response.send_message(embed=Embed(description="Нет данных.", color=0x6e6e6e))
         return
-
-    embed = Embed(color=0x6e6e6e)
-    embed.set_author(name="Топ ролей по потраченным монетам", icon_url=interaction.user.avatar.url if interaction.user.avatar else None)
 
     role_entries = []
     for index, (role_name, allcoinsend_on_role) in enumerate(top_roles, start=1):
@@ -338,8 +472,10 @@ async def top_role(interaction: discord.Interaction):
         prefix = _top_rank_prefix(index)
         role_entries.append(f"{prefix} {role_display} - **{allcoinsend_on_role}** <a:coinonrole:1298391257042784266>")
 
-    embed.add_field(name="", value="\n".join(role_entries) or "Нет данных.", inline=False)
-    await interaction.response.send_message(embed=embed)
+    icon_url = interaction.user.avatar.url if interaction.user.avatar else None
+    view = TopPaginatorView("Топ ролей по потраченным монетам", icon_url, role_entries, interaction.user.id)
+    await interaction.response.send_message(embed=view.render_embed(), view=view)
+    view.message = await interaction.original_response()
 
 # ============================================
 # PROFILE COMMAND - /me
@@ -428,7 +564,7 @@ async def me(interaction: discord.Interaction, пользователь: discord
 
     class ExtendMarriageModal(ui.Modal, title="Продление брака"):
         days = ui.TextInput(
-            label="Количество дней (1 день - 60 монет)",
+            label="Количество дней (1 день - 90 монет)",
             style=discord.TextStyle.short,
             placeholder="Введите количество дней от 1 до 365"
         )
@@ -465,7 +601,7 @@ async def me(interaction: discord.Interaction, пользователь: discord
             new_expiration_date = min(current_expiration + timedelta(days=days_to_extend), max_extend_date)
             
             actual_days_extended = (new_expiration_date - current_expiration).days
-            cost = actual_days_extended * 60
+            cost = actual_days_extended * 90
 
             if marriage_balance < cost:
                 await modal_interaction.response.send_message(
@@ -569,14 +705,14 @@ async def me(interaction: discord.Interaction, пользователь: discord
                 )
                 return
             class AddBalanceModal(ui.Modal, title="Пополнить баланс"):
-                amount = ui.TextInput(label="Сумма (мин. 60 монет)", min_length=2, max_length=10, required=True)
+                amount = ui.TextInput(label="Сумма (мин. 90 монет)", min_length=2, max_length=10, required=True)
 
                 async def on_submit(self, modal_interaction: discord.Interaction):
                     global cursor
                     try:
                         amount = int(self.amount.value)
-                        if amount < 60:
-                            await modal_interaction.response.send_message("Минимальная сумма пополнения — 60 монет.", ephemeral=True)
+                        if amount < 90:
+                            await modal_interaction.response.send_message("Минимальная сумма пополнения — 90 монет.", ephemeral=True)
                             return
 
                         result = await cursor.execute('SELECT balance FROM user_profiles WHERE user_id = $1', user.id)
@@ -781,7 +917,7 @@ async def marry(interaction: discord.Interaction, пользователь: disc
     
     MALE_ROLE_ID = 1126893214536827050
     FEMALE_ROLE_ID = 1126893217405739090
-    MARRIAGE_COST = 1600
+    MARRIAGE_COST = 2500
     MARRIAGE_CATEGORY_ID = 1132300392215097365
     
     # Хранилище активных предложений (user_id -> сумма)
@@ -938,7 +1074,7 @@ async def marry(interaction: discord.Interaction, пользователь: disc
                 sender_row = cursor.fetchone()
                 
                 # Проверяем, что у отправителя всё ещё есть достаточно монет
-                # (с учётом того, что мы уже зарезервировали 1600)
+                # (с учётом того, что мы уже зарезервировали MARRIAGE_COST)
                 if not sender_row or sender_row[0] < 0:
                     # Если баланс отрицательный или отсутствует - что-то пошло не так
                     await button_interaction.response.send_message(
@@ -1154,7 +1290,7 @@ async def marry(interaction: discord.Interaction, пользователь: disc
 # АВТОПРОДЛЕНИЕ / АВТОРАСТОРЖЕНИЕ БРАКОВ
 # ============================================
 
-MARRIAGE_RENEWAL_DAY_COST = 90      # Стоимость одного дня продления (совпадает с ExtendMarriageModal)
+MARRIAGE_RENEWAL_DAY_COST = 90      # Стоимость одного дня продления (совпадает с ExtendMarriageModal, обновлено до 90)
 MARRIAGE_AUTO_RENEW_MAX_DAYS = 30   # Максимум дней, на которое продлеваем за один автоцикл
 
 _marriage_task_started = False
@@ -1688,8 +1824,8 @@ async def create(interaction: discord.Interaction, название: str, цве
 
     result = await cursor.execute("SELECT balance FROM user_profiles WHERE user_id = $1", interaction.user.id)
     user_profile = cursor.fetchone()
-    if not user_profile or user_profile[0] < 800:
-        await interaction.followup.send("У вас недостаточно средств для создания роли. Требуется 800 монет.", ephemeral=True)
+    if not user_profile or user_profile[0] < 1250:
+        await interaction.followup.send("У вас недостаточно средств для создания роли. Требуется 1250 монет.", ephemeral=True)
         return
 
     guild = interaction.guild
@@ -1714,7 +1850,7 @@ async def create(interaction: discord.Interaction, название: str, цве
 
     await interaction.user.add_roles(role)
 
-    await cursor.execute("UPDATE user_profiles SET balance = balance - 800 WHERE user_id = $1", interaction.user.id)
+    await cursor.execute("UPDATE user_profiles SET balance = balance - 1250 WHERE user_id = $1", interaction.user.id)
 
     creation_date = datetime.now()
     expiration_date = creation_date + timedelta(days=30)
@@ -1781,7 +1917,7 @@ async def manage(interaction: Interaction):
     embed.description = description or "Нет активных ролей."
 
     view = RoleSelectView(user_roles, interaction.user, interaction.guild)
-    await interaction.response.send_message(embed=embed, view=view)
+    await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
 class RoleSelectView(View):
     def __init__(self, user_roles, user, guild):
@@ -1836,7 +1972,7 @@ class RoleSelectView(View):
         embed.add_field(name="<:pause:1337141200334880838> Дата архивации", value=archivation_date if archivation_date else "Нет")
         embed.add_field(name="<:unpause:1337141212599025684> Дата разархивации", value=razarchive_date if razarchive_date else "Нет")
         embed.add_field(name="<a:coinonrole:1298391257042784266> Потрачено монет на роль", value=str(allcoinsend_on_role))
-        embed.set_footer(text="Архивация 50 монет")
+        embed.set_footer(text="Архивация 250 монет")
 
         return embed
 
@@ -1874,7 +2010,7 @@ class RoleSelectView(View):
                 return
 
             user_balance = await get_user_balance(cursor, user_id)
-            if user_balance < 50:
+            if user_balance < 250:
                 await interaction.response.send_message("У вас недостаточно монет для архивации роли.", ephemeral=True)
                 return
 
@@ -1896,13 +2032,13 @@ class RoleSelectView(View):
             else:
                 remaining_time_delta = datetime.strptime(expiration_date, "%d.%m.%Y в %Hч %Mм %Sс") - datetime.now()
                 remaining_time = f"{remaining_time_delta.days}д {remaining_time_delta.seconds // 3600}ч {(remaining_time_delta.seconds % 3600) // 60}м {remaining_time_delta.seconds % 60}с"
-                await cursor.execute("UPDATE roles SET archived = 1, archivation_date = $1, expiration_date = '-', remaining_time = $2, allcoinsend_on_role = allcoinsend_on_role + 50 WHERE role_name = $3",
+                await cursor.execute("UPDATE roles SET archived = 1, archivation_date = $1, expiration_date = '-', remaining_time = $2, allcoinsend_on_role = allcoinsend_on_role + 250 WHERE role_name = $3",
                                    datetime.now().strftime("%d.%m.%Y в %Hч %Mм %Sс"), remaining_time, role_name)
                 role = get(interaction.guild.roles, name=role_name)
                 if role:
                     await interaction.user.remove_roles(role)
-                await interaction.response.send_message(f"Роль {role_name} заархивирована и снята. Вычтено 50 монет.", ephemeral=True)
-                await subtract_user_balance(cursor, user_id, 50)
+                await interaction.response.send_message(f"Роль {role_name} заархивирована и снята. Вычтено 250 монет.", ephemeral=True)
+                await subtract_user_balance(cursor, user_id, 250)
 
             result = await cursor.execute("SELECT * FROM roles WHERE role_name = $1", role_name)
             updated_role_info = cursor.fetchone()
@@ -2058,7 +2194,7 @@ async def inventory(interaction: discord.Interaction, пользователь: 
         role_list += f"**{index})** {role.mention}{archived_status} - **осталось:** `{remaining_time_str}`{warning}\n"
 
     embed.description = role_list if role_list else "Нет активных ролей."
-    await interaction.response.send_message(embed=embed)
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
 @role_group.command(name="info", description="Получить информацию о роли")
 @app_commands.describe(роль="Упомяните роль для проверки информации")
@@ -2091,170 +2227,295 @@ async def info(interaction: discord.Interaction, роль: discord.Role):
         embed.add_field(name="<:beskone4:1337141486512242868> Продление", value=f"*{format_date(extend_date)}*", inline=True)
         embed.add_field(name="<a:coinonrole:1298391257042784266> Потрачено на роль", value=f"*{allcoinsend_on_role}*", inline=True)
 
-        await interaction.response.send_message(embed=embed)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
     else:
         await interaction.response.send_message("Эта роль не найдена в базе данных.", ephemeral=True)
 
-class RoleTransfer(discord.ui.View):
-    def __init__(self, bot, interaction, роль, sender, пользователь, сумма, timeout=30):
-        super().__init__(timeout=timeout)
-        self.bot = bot
-        self.interaction = interaction
-        self.role = роль
-        self.sender = sender
-        self.receiver = пользователь
-        self.amount = сумма
-        self.accepted = False
-        self.message = None
-
-    @discord.ui.button(label="Получить", style=discord.ButtonStyle.green)
-    async def accept(self, interaction: discord.Interaction, button: discord.ui.Button):
-        global cursor
-        if interaction.user != self.receiver:
-            await interaction.response.send_message("Вы не можете принять это предложение.", ephemeral=True)
-            return
-        
-        self.accepted = True
-        
-        for item in self.children:
-            item.disabled = True
-        
-        embed = discord.Embed(
-            description=f"Роль {self.role.mention} успешно передана пользователю {self.receiver.mention}",
-            color=discord.Color.from_str('#6e6e6e'),
-            timestamp=discord.utils.utcnow()
-        )
-        embed.set_author(name=f"Трансфер роли - {self.sender.name}", icon_url=self.sender.avatar.url if self.sender.avatar else None)
-        
-        embed.add_field(name="Получатель", value=self.receiver.mention, inline=True)
-        embed.add_field(name="Роль", value=self.role.mention, inline=True)
-        embed.add_field(name="Сумма", value=f"{self.amount} монет" if self.amount > 0 else "Бесплатно", inline=True)
-        
-        await interaction.response.edit_message(embed=embed, view=self)
-        
-        await self.transfer_role()
-        self.stop()
-
-    @discord.ui.button(label="Отказаться", style=discord.ButtonStyle.red)
-    async def decline(self, interaction: discord.Interaction, button: discord.ui.Button):
-        global cursor
-        if interaction.user != self.receiver and interaction.user != self.sender:
-            await interaction.response.send_message("Вы не можете отменить это предложение.", ephemeral=True)
-            return
-        
-        for item in self.children:
-            item.disabled = True
-        
-        embed = discord.Embed(
-            description=f"{interaction.user.mention} нажал <:xx:1295095667617960018> отказать.",
-            color=discord.Color.from_str('#6e6e6e'),
-            timestamp=discord.utils.utcnow()
-        )
-        embed.set_author(name=f"Трансфер роли - {self.sender.name}", icon_url=self.sender.avatar.url if self.sender.avatar else None)
-        
-        embed.add_field(name="Получатель", value=self.receiver.mention, inline=True)
-        embed.add_field(name="Роль", value=self.role.mention, inline=True)
-        embed.add_field(name="Сумма", value=f"{self.amount} <a:coinonrole:1298391257042784266>" if self.amount > 0 else "Бесплатно", inline=True)
-        
-        await interaction.response.edit_message(embed=embed, view=self)
-        
-        await self.return_role()
-        self.stop()
-
-    async def on_timeout(self):
-        global cursor
-        if not self.accepted:
-            embed = discord.Embed(
-                description="<:sleeping:1295095518145282058> Роль возвращена отправителю.",
-                color=discord.Color.from_str('#6e6e6e'),
-                timestamp=discord.utils.utcnow()
-            )
-            embed.set_author(name=f"Трансфер роли - {self.sender.name}", icon_url=self.sender.avatar.url if self.sender.avatar else None)
-            
-            embed.add_field(name="Получатель", value=self.receiver.mention, inline=True)
-            embed.add_field(name="Роль", value=self.role.mention, inline=True)
-            embed.add_field(name="Сумма", value=f"{self.amount} <a:coinonrole:1298391257042784266>" if self.amount > 0 else "Бесплатно", inline=True)
-            
-            for item in self.children:
-                item.disabled = True
-            
-            try:
-                original_message = await self.interaction.original_response()
-                await original_message.edit(embed=embed, view=self)
-            except discord.NotFound:
-                pass
-            
-            await self.return_role()
-
-    async def transfer_role(self):
-        global cursor
-        await cursor.execute("UPDATE roles SET id_owner_now = $1 WHERE role_name = $2", self.receiver.id, self.role.name)
-        
-        await self.receiver.add_roles(self.role)
-        
-        if self.amount > 0:
-            await cursor.execute("UPDATE user_profiles SET balance = balance - $1 WHERE user_id = $2", self.amount, self.receiver.id)
-            await cursor.execute("UPDATE user_profiles SET balance = balance + $1 WHERE user_id = $2", self.amount, self.sender.id)
-
-    async def return_role(self):
-        global cursor
-        await cursor.execute("UPDATE roles SET id_owner_now = $1 WHERE role_name = $2", self.sender.id, self.role.name)
-        
-        await self.sender.add_roles(self.role)
-
 @role_group.command(name="give", description="Передать роль другому пользователю")
-@app_commands.describe(
-    роль="Роль, которую вы хотите передать",
-    пользователь="Пользователь, которому вы хотите передать роль",
-    сумма="Сумма, которую вы хотите получить за роль (необязательно)"
-)
 @role_existence_check
-async def give(interaction: discord.Interaction, роль: discord.Role, пользователь: discord.Member, сумма: int = 0):
+async def give(interaction: discord.Interaction):
     global cursor
     sender = interaction.user
 
-    result = await cursor.execute("SELECT id_owner_now FROM roles WHERE role_name = $1 AND id_owner_now = $2", роль.name, sender.id)
-    if not cursor.fetchone():
-        await interaction.response.send_message("Вы не являетесь владельцем этой роли.", ephemeral=True)
+    result = await cursor.execute("SELECT role_name FROM roles WHERE id_owner_now = $1", sender.id)
+    owned_roles = [row[0] for row in cursor.fetchall()]
+
+    if not owned_roles:
+        await interaction.response.send_message("У вас нет ролей для передачи.", ephemeral=True)
         return
 
-    if пользователь == sender:
-        await interaction.response.send_message("Вы не можете передать роль самому себе.", ephemeral=True)
-        return
+    view = RoleGiveView(sender, owned_roles)
+    await interaction.response.send_message(embed=view.build_embed(), view=view, ephemeral=True)
 
-    result = await cursor.execute("SELECT COUNT(*) FROM roles WHERE id_owner_now = $1", пользователь.id)
-    role_count = cursor.fetchone()[0]
-    if role_count >= 2:
-        await interaction.response.send_message("У получателя уже есть 2 роли. Передача <:xx:1295095667617960018> невозможна.", ephemeral=True)
-        return
+class RoleGiveView(ui.View):
+    """Меню передачи роли: выбор роли -> выбор получателя -> сумма -> подтверждение.
+    Логика построена по образцу LobbyManageView из commands_lobby.py."""
 
-    if сумма > 0:
-        result = await cursor.execute("SELECT balance FROM user_profiles WHERE user_id = $1", пользователь.id)
-        receiver_balance = cursor.fetchone()
-        if not receiver_balance or receiver_balance[0] < сумма:
-            await interaction.response.send_message("У получателя недостаточно средств для оплаты роли.", ephemeral=True)
+    def __init__(self, sender: discord.Member, owned_roles: list):
+        super().__init__(timeout=120)
+        self.sender = sender
+        self.owned_roles = owned_roles
+        self.selected_role_name: str | None = None
+        self.selected_user: discord.Member | None = None
+        self.amount = 0
+        self.amount_set = False
+        self.message = None
+
+        self.role_select = RoleGiveRoleSelect(self, owned_roles)
+        self.user_select = RoleGiveUserSelect(self)
+        self.amount_button = RoleGiveAmountButton(self)
+
+        self.add_item(self.role_select)
+        self.add_item(self.user_select)
+        self.add_item(self.amount_button)
+        self.update_amount_button_state()
+
+    def update_amount_button_state(self):
+        self.amount_button.disabled = not (self.selected_role_name and self.selected_user)
+
+    def build_embed(self):
+        embed = discord.Embed(color=0x6e6e6e)
+        embed.set_author(name="Передача роли", icon_url=self.sender.display_avatar.url)
+        embed.add_field(
+            name="<:pinkdiamond:1295376800431476780> Роль",
+            value=f"`{self.selected_role_name}`" if self.selected_role_name else "не выбрана",
+            inline=True
+        )
+        embed.add_field(
+            name="<:4elovekww:1337141385530445886> Получатель",
+            value=self.selected_user.mention if self.selected_user else "не выбран",
+            inline=True
+        )
+        if self.amount_set:
+            embed.add_field(
+                name="<a:coinonrole:1298391257042784266> Сумма",
+                value=f"{self.amount} монет" if self.amount > 0 else "Бесплатно",
+                inline=True
+            )
+            embed.set_footer(text="Нажмите «Подтвердить», чтобы отправить предложение")
+        else:
+            embed.set_footer(text="Выберите роль и получателя, затем нажмите «Сумма»")
+        return embed
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.sender.id:
+            await interaction.response.send_message("Это меню не для вас.", ephemeral=True)
+            return False
+        return True
+
+class RoleGiveRoleSelect(ui.Select):
+    def __init__(self, parent_view: "RoleGiveView", owned_roles: list):
+        options = [discord.SelectOption(label=name[:100], value=name) for name in owned_roles[:2]]
+        super().__init__(placeholder="Выберите роль для передачи", min_values=1, max_values=1, options=options)
+        self.parent_view = parent_view
+
+    async def callback(self, interaction: discord.Interaction):
+        self.parent_view.selected_role_name = self.values[0]
+        self.parent_view.update_amount_button_state()
+        await interaction.response.edit_message(embed=self.parent_view.build_embed(), view=self.parent_view)
+
+class RoleGiveUserSelect(discord.ui.UserSelect):
+    def __init__(self, parent_view: "RoleGiveView"):
+        super().__init__(placeholder="Выберите получателя", min_values=1, max_values=1)
+        self.parent_view = parent_view
+
+    async def callback(self, interaction: discord.Interaction):
+        selected = self.values[0]
+        member = selected if isinstance(selected, discord.Member) else interaction.guild.get_member(selected.id)
+
+        if member is None or member.bot:
+            await interaction.response.send_message("Нельзя выбрать бота или пользователя вне сервера.", ephemeral=True)
+            return
+        if member.id == self.parent_view.sender.id:
+            await interaction.response.send_message("Нельзя передать роль самому себе.", ephemeral=True)
             return
 
-    await cursor.execute("UPDATE roles SET id_owner_now = -1 WHERE role_name = $1", роль.name)
+        self.parent_view.selected_user = member
+        self.parent_view.update_amount_button_state()
+        await interaction.response.edit_message(embed=self.parent_view.build_embed(), view=self.parent_view)
 
-    await sender.remove_roles(роль)
+class RoleGiveAmountButton(ui.Button):
+    def __init__(self, parent_view: "RoleGiveView"):
+        super().__init__(label="Сумма", style=discord.ButtonStyle.secondary, emoji="<a:coinonrole:1298391257042784266>", disabled=True)
+        self.parent_view = parent_view
 
-    embed = discord.Embed(
-        description="<:clock:1298744322661023856> Ожидание подтверждения передачи роли",
-        color=discord.Color.from_str('#6e6e6e'),
-        timestamp=interaction.created_at
-    )
-    embed.set_author(name=f"Трансфер роли - {sender.name}", icon_url=sender.avatar.url if sender.avatar else None)
+    async def callback(self, interaction: discord.Interaction):
+        await interaction.response.send_modal(RoleGiveAmountModal(self.parent_view))
 
-    embed.add_field(name="Получатель", value=пользователь.mention, inline=True)
-    embed.add_field(name="Роль", value=роль.mention, inline=True)
-    embed.add_field(name="Сумма", value=f"{сумма} <a:coinonrole:1298391257042784266>" if сумма > 0 else "Бесплатно", inline=True)
-    embed.set_footer(text="У получателя есть 30 секунд на принятие роли")
+class RoleGiveAmountModal(ui.Modal, title="Сумма за роль"):
+    amount = ui.TextInput(label="Сумма монет (0 — бесплатно)", style=discord.TextStyle.short, placeholder="0", required=True, max_length=10)
 
-    view = RoleTransfer(interaction.client, interaction, роль, sender, пользователь, сумма)
-    await interaction.response.send_message(embed=embed, view=view)
+    def __init__(self, parent_view: "RoleGiveView"):
+        super().__init__()
+        self.parent_view = parent_view
 
-    await view.wait()
+    async def on_submit(self, interaction: discord.Interaction):
+        try:
+            value = int(self.amount.value)
+            if value < 0:
+                raise ValueError
+        except ValueError:
+            await interaction.response.send_message("Введите неотрицательное целое число.", ephemeral=True)
+            return
+
+        view = self.parent_view
+        view.amount = value
+        view.amount_set = True
+
+        # Кнопка "Сумма" больше не нужна — заменяем её на "Подтвердить"
+        view.remove_item(view.amount_button)
+        view.confirm_button = RoleGiveConfirmButton(view)
+        view.add_item(view.confirm_button)
+
+        await interaction.response.edit_message(embed=view.build_embed(), view=view)
+
+class RoleGiveConfirmButton(ui.Button):
+    def __init__(self, parent_view: "RoleGiveView"):
+        super().__init__(label="Подтвердить", style=discord.ButtonStyle.success, emoji="<:checkmark:1526013748718993428>")
+        self.parent_view = parent_view
+
+    async def callback(self, interaction: discord.Interaction):
+        global cursor
+        view = self.parent_view
+        sender = view.sender
+        role_name = view.selected_role_name
+        получатель = view.selected_user
+        сумма = view.amount
+
+        # Финальные проверки прямо перед отправкой публичного предложения
+        result = await cursor.execute("SELECT id_owner_now FROM roles WHERE role_name = $1 AND id_owner_now = $2", role_name, sender.id)
+        if not cursor.fetchone():
+            await interaction.response.edit_message(
+                embed=discord.Embed(description="Эта роль вам больше не принадлежит.", color=0x6e6e6e), view=None
+            )
+            return
+
+        role_obj = discord.utils.get(interaction.guild.roles, name=role_name)
+        if role_obj is None:
+            await interaction.response.edit_message(
+                embed=discord.Embed(description="Роль не найдена на сервере.", color=0x6e6e6e), view=None
+            )
+            return
+
+        result = await cursor.execute("SELECT COUNT(*) FROM roles WHERE id_owner_now = $1", получатель.id)
+        role_count = cursor.fetchone()[0]
+        if role_count >= 2:
+            await interaction.response.edit_message(
+                embed=discord.Embed(description="У получателя уже есть 2 роли. Передача невозможна.", color=0x6e6e6e), view=None
+            )
+            return
+
+        if сумма > 0:
+            result = await cursor.execute("SELECT balance FROM user_profiles WHERE user_id = $1", получатель.id)
+            receiver_balance = cursor.fetchone()
+            if not receiver_balance or receiver_balance[0] < сумма:
+                await interaction.response.edit_message(
+                    embed=discord.Embed(description="У получателя недостаточно средств для оплаты роли.", color=0x6e6e6e), view=None
+                )
+                return
+
+        # Резервируем роль на время ожидания принятия
+        await cursor.execute("UPDATE roles SET id_owner_now = -1 WHERE role_name = $1", role_name)
+        await sender.remove_roles(role_obj)
+
+        # Закрываем ephemeral-меню отправителя
+        await interaction.response.edit_message(
+            embed=discord.Embed(
+                description=f"Предложение о передаче роли {role_obj.mention} отправлено {получатель.mention}.",
+                color=0x6e6e6e
+            ),
+            view=None
+        )
+
+        # Публичное предложение с кнопкой для получателя (видно всем, живёт максимум 60 секунд)
+        offer_embed = discord.Embed(color=discord.Color.from_str('#6e6e6e'), timestamp=discord.utils.utcnow())
+        offer_embed.set_author(name=f"Трансфер роли - {sender.name}", icon_url=sender.display_avatar.url)
+        offer_embed.add_field(name="Отправитель", value=sender.mention, inline=True)
+        offer_embed.add_field(name="Получатель", value=получатель.mention, inline=True)
+        offer_embed.add_field(name="Роль", value=role_obj.mention, inline=True)
+        offer_embed.add_field(name="Сумма", value=f"{сумма} <a:coinonrole:1298391257042784266>" if сумма > 0 else "Бесплатно", inline=True)
+        offer_embed.set_footer(text="У получателя есть 60 секунд, чтобы принять предложение")
+
+        offer_view = RoleGiveAcceptView(sender, получатель, role_obj, role_name, сумма)
+        offer_message = await interaction.channel.send(content=получатель.mention, embed=offer_embed, view=offer_view)
+        offer_view.message = offer_message
+
+class RoleGiveAcceptView(ui.View):
+    """Публичная кнопка «Купить» для получателя. 60 секунд на принятие,
+    иначе роль возвращается отправителю, а сообщение стирается."""
+
+    def __init__(self, sender: discord.Member, получатель: discord.Member, role_obj: discord.Role, role_name: str, сумма: int):
+        super().__init__(timeout=60)
+        self.sender = sender
+        self.получатель = получатель
+        self.role_obj = role_obj
+        self.role_name = role_name
+        self.сумма = сумма
+        self.message = None
+        self.resolved = False
+
+    async def on_timeout(self):
+        global cursor
+        if self.resolved:
+            return
+        self.resolved = True
+
+        await cursor.execute("UPDATE roles SET id_owner_now = $1 WHERE role_name = $2", self.sender.id, self.role_name)
+        try:
+            await self.sender.add_roles(self.role_obj)
+        except Exception:
+            pass
+
+        if self.message:
+            try:
+                await self.message.delete()
+            except Exception:
+                pass
+
+    @discord.ui.button(label="Купить", style=discord.ButtonStyle.success, emoji="<:checkmark:1526013748718993428>")
+    async def buy(self, interaction: discord.Interaction, button: discord.ui.Button):
+        global cursor
+        if interaction.user.id != self.получатель.id:
+            await interaction.response.send_message("Это предложение не для вас.", ephemeral=True)
+            return
+        if self.resolved:
+            await interaction.response.send_message("Это предложение уже обработано.", ephemeral=True)
+            return
+
+        if self.сумма > 0:
+            result = await cursor.execute("SELECT balance FROM user_profiles WHERE user_id = $1", self.получатель.id)
+            receiver_balance = cursor.fetchone()
+            if not receiver_balance or receiver_balance[0] < self.сумма:
+                await interaction.response.send_message("У вас недостаточно монет для покупки этой роли.", ephemeral=True)
+                return
+
+        self.resolved = True
+        self.stop()
+
+        await cursor.execute("UPDATE roles SET id_owner_now = $1 WHERE role_name = $2", self.получатель.id, self.role_name)
+        await self.получатель.add_roles(self.role_obj)
+
+        if self.сумма > 0:
+            await cursor.execute("UPDATE user_profiles SET balance = balance - $1 WHERE user_id = $2", self.сумма, self.получатель.id)
+            await cursor.execute("UPDATE user_profiles SET balance = balance + $1 WHERE user_id = $2", self.сумма, self.sender.id)
+
+        success_embed = discord.Embed(
+            description=f"Роль {self.role_obj.mention} успешно передана пользователю {self.получатель.mention}",
+            color=discord.Color.from_str('#6e6e6e'),
+            timestamp=discord.utils.utcnow()
+        )
+        success_embed.set_author(name=f"Трансфер роли - {self.sender.name}", icon_url=self.sender.display_avatar.url)
+        success_embed.add_field(name="Получатель", value=self.получатель.mention, inline=True)
+        success_embed.add_field(name="Роль", value=self.role_obj.mention, inline=True)
+        success_embed.add_field(name="Сумма", value=f"{self.сумма} монет" if self.сумма > 0 else "Бесплатно", inline=True)
+
+        await interaction.response.defer()
+        await interaction.channel.send(embed=success_embed)
+
+        try:
+            await interaction.message.delete()
+        except Exception:
+            pass
 
 # ============================================
 # WITHROLE COMMAND
@@ -2270,13 +2531,16 @@ async def withrole(interaction: discord.Interaction, роль: discord.Role):
             embed=discord.Embed(
                 description="В данной роли нет пользователей.",
                 color=0x6e6e6e
-            )
+            ),
+            ephemeral=True
         )
         return
 
-    await list_role_members_update(interaction, роль, 0, members_with_role)
+    embed, view = build_role_members_page(interaction.user, роль, 0, members_with_role)
+    await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
-async def list_role_members_update(interaction: discord.Interaction, роль: discord.Role, offset: int, members: list):
+def build_role_members_page(owner: discord.Member, роль: discord.Role, offset: int, members: list):
+    """Строит embed + view для страницы списка участников роли (используется и при первом ответе, и при edit_message)."""
     members_per_page = 20
     members_to_display = members[offset:offset + members_per_page]
 
@@ -2289,27 +2553,20 @@ async def list_role_members_update(interaction: discord.Interaction, роль: d
     for index, member in enumerate(members_to_display, start=offset + 1):
         member_list.append(f"**{index}.** {member.mention}")
 
-    embed.description = "\n".join(member_list)
+    embed.description = "\n".join(member_list) or "Нет пользователей на этой странице."
     total_pages = (len(members) + members_per_page - 1) // members_per_page
     embed.set_footer(text=f"Страница {offset // members_per_page + 1}/{total_pages}")
 
-    view = RoleMemberView(offset, len(members), interaction, роль, members)
-
-    if isinstance(interaction, discord.Interaction):
-        if interaction.response.is_done():
-            await interaction.edit_original_response(embed=embed, view=view)
-        else:
-            await interaction.response.send_message(embed=embed, view=view)
-    else:
-        await interaction.edit(embed=embed, view=view)
+    view = RoleMemberView(offset, len(members), owner, роль, members)
+    return embed, view
 
 class RoleMemberView(ui.View):
-    def __init__(self, offset: int, total_items: int, interaction: discord.Interaction, роль: discord.Role, members: list):
+    def __init__(self, offset: int, total_items: int, owner: discord.Member, роль: discord.Role, members: list):
         super().__init__()
         self.offset = offset
         self.total_items = total_items
         self.items_per_page = 20
-        self.interaction = interaction
+        self.owner = owner
         self.роль = роль
         self.members = members
         self.update_buttons()
@@ -2327,25 +2584,25 @@ class RoleMemberView(ui.View):
         self.add_item(button)
 
     async def go_back(self, interaction: discord.Interaction):
-        if interaction.user.id != self.interaction.user.id:
+        if interaction.user.id != self.owner.id:
             await interaction.response.send_message("У вас нет прав на это действие.", ephemeral=True)
             return
 
         new_offset = max(self.offset - self.items_per_page, 0)
-        await list_role_members_update(interaction.message, self.роль, new_offset, self.members)
-        await interaction.response.defer()
+        embed, view = build_role_members_page(self.owner, self.роль, new_offset, self.members)
+        await interaction.response.edit_message(embed=embed, view=view)
 
     async def go_forward(self, interaction: discord.Interaction):
-        if interaction.user.id != self.interaction.user.id:
+        if interaction.user.id != self.owner.id:
             await interaction.response.send_message("У вас нет прав на это действие.", ephemeral=True)
             return
 
-        new_offset = min(self.offset + self.items_per_page, self.total_items - self.items_per_page)
-        await list_role_members_update(interaction.message, self.роль, new_offset, self.members)
-        await interaction.response.defer()
+        new_offset = min(self.offset + self.items_per_page, max(self.total_items - self.items_per_page, 0))
+        embed, view = build_role_members_page(self.owner, self.роль, new_offset, self.members)
+        await interaction.response.edit_message(embed=embed, view=view)
 
     async def show_role_info(self, interaction: discord.Interaction):
-        if interaction.user.id != self.interaction.user.id:
+        if interaction.user.id != self.owner.id:
             await interaction.response.send_message("У вас нет прав на это действие.", ephemeral=True)
             return
 
