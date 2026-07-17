@@ -117,7 +117,7 @@ async def daily(interaction: discord.Interaction):
                     color="#6e6e6e",
                     author_name=f"Бонус - {interaction.user.display_name}",
                     author_icon_url=interaction.user.avatar.url
-                ))
+                ), ephemeral=True)  
                 return
 
         new_balance = balance_amount + BONUS_AMOUNT
@@ -129,7 +129,7 @@ async def daily(interaction: discord.Interaction):
             author_name=f"Бонус - {interaction.user.display_name}",
             author_icon_url=interaction.user.avatar.url,
             footer="Возвращайтесь через 24 часа"
-        ))
+        ), ephemeral=True)  
     else:
         await cursor.execute('INSERT INTO user_profiles (user_id, balance, last_daily_claimed) VALUES ($1, $2, $3)', 
                            interaction.user.id, BONUS_AMOUNT, current_time.strftime("%Y-%m-%d %H:%M:%S"))
@@ -139,7 +139,7 @@ async def daily(interaction: discord.Interaction):
             author_name=f"Бонус - {interaction.user.display_name}",
             author_icon_url=interaction.user.avatar.url,
             footer="Возвращайтесь через 24 часа"
-        ))
+        ), ephemeral=True)  
 
 @eco_group.command(name="work", description="Поработать и получить монеты (каждые 12 часов)")
 async def work(interaction: discord.Interaction):
@@ -166,7 +166,7 @@ async def work(interaction: discord.Interaction):
                     color="#6e6e6e",
                     author_name=f"Работа - {interaction.user.display_name}",
                     author_icon_url=interaction.user.avatar.url
-                ))
+                ), ephemeral=True)  
                 return
 
         new_balance = (balance_amount or 0) + earned
@@ -178,7 +178,7 @@ async def work(interaction: discord.Interaction):
             author_name=f"Работа - {interaction.user.display_name}",
             author_icon_url=interaction.user.avatar.url,
             footer="Возвращайтесь через 12 часов"
-        ))
+        ), ephemeral=True)  
     else:
         await cursor.execute('INSERT INTO user_profiles (user_id, balance, last_work_claimed) VALUES ($1, $2, $3)', 
                            interaction.user.id, earned, current_time.strftime("%Y-%m-%d %H:%M:%S"))
@@ -188,7 +188,7 @@ async def work(interaction: discord.Interaction):
             author_name=f"Работа - {interaction.user.display_name}",
             author_icon_url=interaction.user.avatar.url,
             footer="Возвращайтесь через 12 часов"
-        ))
+        ), ephemeral=True)  
 
 @eco_group.command(name="purse", description="Администраторская команда для выдачи средств пользователю")
 @app_commands.describe(
