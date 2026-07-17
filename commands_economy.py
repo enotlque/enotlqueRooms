@@ -536,9 +536,16 @@ async def create_profile_embed(cursor, user, guild):
         now = datetime.now(user.joined_at.tzinfo)
         days_on_server = (now - user.joined_at).days
 
+    rank_result = await cursor.execute(
+        'SELECT COUNT(*) + 1 FROM user_profiles WHERE voice_hours > (SELECT voice_hours FROM user_profiles WHERE user_id = $1)',
+        user.id
+    )
+    rank_row = cursor.fetchone()
+    rank = rank_row[0] if rank_row else 1
+
     embed.add_field(
         name="⏱️ Активность",
-        value=f"```{float(voice_hours):.1f}ч в войсе | {messages_count} сообщ.```",
+        value=f"```{float(voice_hours):.1f}ч в войсе | {messages_count} сообщ. | топ #{rank}```",
         inline=False
     )
 
