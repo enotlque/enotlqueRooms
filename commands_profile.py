@@ -48,13 +48,13 @@ JOINED_FONT_SIZE = 18
 
 # Левая колонка (Личная роль / Личная комната / Статус брака).
 # Текст выравнивается по левому краю, под первой буквой заголовка
-LEFT_X = 160  # под буквой "Л" в "Личная роль" и "С" в "Статус брака"
-LEFT_MAX_WIDTH = 400
+LEFT_X = 165  # под буквой "Л" в "Личная роль" и "С" в "Статус брака"
+LEFT_MAX_WIDTH = 280
 LEFT_VALUE_FONT_SIZE = 26
 LEFT_VALUES_Y = {
     "role": 290,    # сразу под "Личная роль"
     "room": 490,    # сразу под "Личная комната"
-    "marriage": 690, # сразу под "Статус брака"
+    "marriage": 680, # сразу под "Статус брака"
 }
 
 # Правая колонка (Баланс / В войсе / Сообщения / Место в топе).
@@ -108,7 +108,6 @@ def _draw_centered_text(draw, center_x: int, y: int, text: str, font, max_width:
 
 
 def _draw_left_aligned_text(draw, x: int, y: int, text: str, font, max_width: int, fill=TEXT_COLOR) -> None:
-    """Рисует текст с выравниванием по левому краю, обрезая по max_width."""
     text = _truncate_to_width(draw, text, font, max_width)
     draw.text((x, y), text, font=font, fill=fill)
 
