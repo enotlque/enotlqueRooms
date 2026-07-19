@@ -76,14 +76,10 @@ async def init_db():
                     last_work_claimed TEXT,
                     god_kissed TEXT DEFAULT '—',
                     voice_hours NUMERIC DEFAULT 0,
+                    displayed_role TEXT,
                     messages_count INTEGER DEFAULT 0
                 )
             ''')
-            # На случай, если таблица уже существовала до этого обновления -
-            # безопасно (идемпотентно) добавляем новые колонки и убираем старую.
-            await conn.execute('ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS voice_hours NUMERIC DEFAULT 0')
-            await conn.execute('ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS messages_count INTEGER DEFAULT 0')
-            await conn.execute('ALTER TABLE user_profiles DROP COLUMN IF EXISTS custom_badges')
             print("✅ Таблица user_profiles создана/проверена")
             
             await conn.execute('''
