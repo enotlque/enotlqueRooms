@@ -18,7 +18,7 @@ import time
 import os
 import io
 from PIL import Image, ImageDraw, ImageFont
-from cache import get_cached, set_cached, delete_cached, profile_cache_key, balance_cache_key, top_cache_key
+from cache import set_cached, delete_cached, balance_cache_key, profile_cache_key, top_cache_key
 
 # ============================================
 # ГЛОБАЛЬНЫЙ CURSOR (передается из main.py)
@@ -139,7 +139,6 @@ async def daily(interaction: discord.Interaction):
         await cursor.execute('UPDATE user_profiles SET balance = $1, last_daily_claimed = $2 WHERE user_id = $3', 
                            new_balance, current_time.strftime("%Y-%m-%d %H:%M:%S"), interaction.user.id)
         
-        from cache import set_cached, balance_cache_key, profile_cache_key
         await set_cached(balance_cache_key(interaction.user.id), new_balance, 60)
         await set_cached(profile_cache_key(interaction.user.id), None, 1)  # Инвалидация профиля
         
@@ -154,7 +153,6 @@ async def daily(interaction: discord.Interaction):
         await cursor.execute('INSERT INTO user_profiles (user_id, balance, last_daily_claimed) VALUES ($1, $2, $3)', 
                            interaction.user.id, BONUS_AMOUNT, current_time.strftime("%Y-%m-%d %H:%M:%S"))
         
-        from cache import set_cached, balance_cache_key, profile_cache_key
         await set_cached(balance_cache_key(interaction.user.id), BONUS_AMOUNT, 60)
         await set_cached(profile_cache_key(interaction.user.id), None, 1)  # Инвалидация профиля
         
@@ -198,7 +196,6 @@ async def work(interaction: discord.Interaction):
         await cursor.execute('UPDATE user_profiles SET balance = $1, last_work_claimed = $2 WHERE user_id = $3', 
                            new_balance, current_time.strftime("%Y-%m-%d %H:%M:%S"), interaction.user.id)
         
-        from cache import set_cached, balance_cache_key, profile_cache_key
         await set_cached(balance_cache_key(interaction.user.id), new_balance, 60)
         await set_cached(profile_cache_key(interaction.user.id), None, 1)  # Инвалидация профиля
         
@@ -213,7 +210,6 @@ async def work(interaction: discord.Interaction):
         await cursor.execute('INSERT INTO user_profiles (user_id, balance, last_work_claimed) VALUES ($1, $2, $3)', 
                            interaction.user.id, earned, current_time.strftime("%Y-%m-%d %H:%M:%S"))
         
-        from cache import set_cached, balance_cache_key, profile_cache_key
         await set_cached(balance_cache_key(interaction.user.id), earned, 60)
         await set_cached(profile_cache_key(interaction.user.id), None, 1)  # Инвалидация профиля
         
