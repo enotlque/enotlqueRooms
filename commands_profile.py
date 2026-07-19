@@ -33,29 +33,28 @@ AVATAR_SIZE = AVATAR_RADIUS * 2
 AVATAR_RING_WIDTH = 5
 AVATAR_RING_COLOR = (208, 196, 184, 235)  # тёплый серебристо-бежевый, под цвет рамки шаблона
 AVATAR_SUPERSAMPLE = 4  # антиалиасинг круглой маски, чтобы не было "рваных" пикселей по краю
-DEBUG_GRID = True
+
 # Ник под аватаром
 USERNAME_CENTER_X = 831
 USERNAME_Y = 515
 USERNAME_MAX_WIDTH = 430
-USERNAME_FONT_SIZE = 40
+USERNAME_FONT_SIZE = 40  # увеличен с 34
 
 # "На сервере с ..." — по центру, у самого нижнего края центрального прямоугольника
 JOINED_CENTER_X = 831
-JOINED_Y = 775
+JOINED_Y = 775  # поднят на 17px выше
 JOINED_MAX_WIDTH = 460
 JOINED_FONT_SIZE = 18
 
 # Левая колонка (Личная роль / Личная комната / Статус брака).
-# Значение центрируется в зоне между нижним краем иконки-эмодзи и нижним
-# краем прямоугольника (не у самого низа, а по центру этой зоны).
-LEFT_CENTER_X = 357
+# Текст выравнивается по левому краю, под первой буквой заголовка
+LEFT_X = 160  # под буквой "Л" в "Личная роль" и "С" в "Статус брака"
 LEFT_MAX_WIDTH = 400
 LEFT_VALUE_FONT_SIZE = 26
 LEFT_VALUES_Y = {
-    "role": 285,
-    "room": 485,
-    "marriage": 685,
+    "role": 290,    # сразу под "Личная роль"
+    "room": 490,    # сразу под "Личная комната"
+    "marriage": 690, # сразу под "Статус брака"
 }
 
 # Правая колонка (Баланс / В войсе / Сообщения / Место в топе).
@@ -106,6 +105,12 @@ def _draw_centered_text(draw, center_x: int, y: int, text: str, font, max_width:
     text = _truncate_to_width(draw, text, font, max_width)
     width, left_bearing = _measure(draw, text, font)
     draw.text((center_x - width / 2 - left_bearing, y), text, font=font, fill=fill)
+
+
+def _draw_left_aligned_text(draw, x: int, y: int, text: str, font, max_width: int, fill=TEXT_COLOR) -> None:
+    """Рисует текст с выравниванием по левому краю, обрезая по max_width."""
+    text = _truncate_to_width(draw, text, font, max_width)
+    draw.text((x, y), text, font=font, fill=fill)
 
 
 def _draw_right_aligned_text(draw, right_x: int, y: int, text: str, font, max_width: int, fill=TEXT_COLOR) -> None:
@@ -285,10 +290,10 @@ async def create_profile_image(cursor, member: discord.Member, guild: discord.Gu
     # дата на сервере
     _draw_centered_text(draw, JOINED_CENTER_X, JOINED_Y, f"На сервере с {joined_str}г", font_joined, JOINED_MAX_WIDTH, fill=MUTED_COLOR)
 
-    # левая колонка
-    _draw_centered_text(draw, LEFT_CENTER_X, LEFT_VALUES_Y["role"], displayed_role.name if displayed_role else "Отсутствует", font_left_value, LEFT_MAX_WIDTH)
-    _draw_centered_text(draw, LEFT_CENTER_X, LEFT_VALUES_Y["room"], room_name if room_name else "Отсутствует", font_left_value, LEFT_MAX_WIDTH)
-    _draw_centered_text(draw, LEFT_CENTER_X, LEFT_VALUES_Y["marriage"], marriage_text, font_left_value, LEFT_MAX_WIDTH)
+    # левая колонка (выравнивание по левому краю, под первой буквой заголовка)
+    _draw_left_aligned_text(draw, LEFT_X, LEFT_VALUES_Y["role"], displayed_role.name if displayed_role else "Отсутствует", font_left_value, LEFT_MAX_WIDTH)
+    _draw_left_aligned_text(draw, LEFT_X, LEFT_VALUES_Y["room"], room_name if room_name else "Отсутствует", font_left_value, LEFT_MAX_WIDTH)
+    _draw_left_aligned_text(draw, LEFT_X, LEFT_VALUES_Y["marriage"], marriage_text, font_left_value, LEFT_MAX_WIDTH)
 
     # правая колонка
     _draw_right_aligned_text(draw, RIGHT_BLOCK_RIGHT_EDGE, RIGHT_VALUES_Y["balance"], f"{balance}", font_right_value, RIGHT_MAX_WIDTH)
