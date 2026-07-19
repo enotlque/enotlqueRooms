@@ -42,7 +42,7 @@ USERNAME_FONT_SIZE = 34
 
 # "На сервере с ..." — по центру, у самого нижнего края центрального прямоугольника
 JOINED_CENTER_X = 831
-JOINED_Y = 758
+JOINED_Y = 743
 JOINED_MAX_WIDTH = 460
 JOINED_FONT_SIZE = 18
 
@@ -53,9 +53,9 @@ LEFT_CENTER_X = 357
 LEFT_MAX_WIDTH = 400
 LEFT_VALUE_FONT_SIZE = 26
 LEFT_VALUES_Y = {
-    "role": 343,
-    "room": 540,
-    "marriage": 735,
+    "role": 370,
+    "room": 555,
+    "marriage": 740,
 }
 
 # Правая колонка (Баланс / В войсе / Сообщения / Место в топе).
