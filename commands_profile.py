@@ -200,7 +200,7 @@ async def create_profile_image(cursor, member: discord.Member, guild: discord.Gu
         balance, voice_hours, messages_count = 0, 0, 0
     else:
         balance, voice_hours, messages_count = row
-        voice_hours = float(voice_hours or 0)
+        voice_hours = round(float(voice_hours or 0), 2)
         messages_count = messages_count or 0
 
     # --- место в топе по часам в войсе ---
