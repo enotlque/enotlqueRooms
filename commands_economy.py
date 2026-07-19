@@ -18,7 +18,7 @@ import time
 import os
 import io
 from PIL import Image, ImageDraw, ImageFont
-from cache import set_cached, delete_cached, balance_cache_key, profile_cache_key, top_cache_key
+from cache import get_cached, set_cached, delete_cached, balance_cache_key, profile_cache_key, top_cache_key
 
 # ============================================
 # ГЛОБАЛЬНЫЙ CURSOR (передается из main.py)
