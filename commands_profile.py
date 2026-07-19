@@ -53,9 +53,9 @@ LEFT_CENTER_X = 357
 LEFT_MAX_WIDTH = 400
 LEFT_VALUE_FONT_SIZE = 26
 LEFT_VALUES_Y = {
-    "role": 300,
-    "room": 500,
-    "marriage": 700,
+    "role": 325,
+    "room": 525,
+    "marriage": 725,
 }
 
 # Правая колонка (Баланс / В войсе / Сообщения / Место в топе).
