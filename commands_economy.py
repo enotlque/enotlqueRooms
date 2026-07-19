@@ -19,6 +19,7 @@ import os
 import io
 from PIL import Image, ImageDraw, ImageFont
 from cache import get_cached, set_cached, delete_cached, balance_cache_key, profile_cache_key, top_cache_key
+from commands_profile import create_profile_image
 
 # ============================================
 # ГЛОБАЛЬНЫЙ CURSOR (передается из main.py)
@@ -572,71 +573,16 @@ async def top_hours(interaction: discord.Interaction):
 # PROFILE COMMAND - /me
 # ============================================
 
-async def create_profile_embed(cursor, user, guild):
-    """Создает embed профиля пользователя"""
-    result = await cursor.execute(
-        'SELECT balance, god_kissed, voice_hours, messages_count FROM user_profiles WHERE user_id = $1',
-        user.id
-    )
-    row = cursor.fetchone()
-
-    if not row:
-        await cursor.execute(
-            'INSERT INTO user_profiles (user_id, balance) VALUES ($1, $2)', user.id, 0
-        )
-        balance_amount, god_kissed, voice_hours, messages_count = 0, "—", 0, 0
-    else:
-        balance_amount, god_kissed, voice_hours, messages_count = row
-        voice_hours = voice_hours or 0
-        messages_count = messages_count or 0
-
-    embed = discord.Embed(color=0x6e6e6e, title="", description="")
-
-    # Расчет дней на сервере
-    days_on_server = 0
-    if isinstance(user, discord.Member) and user.joined_at:
-        now = datetime.now(user.joined_at.tzinfo)
-        days_on_server = (now - user.joined_at).days
-
-    rank_result = await cursor.execute(
-        'SELECT COUNT(*) + 1 FROM user_profiles WHERE voice_hours > (SELECT voice_hours FROM user_profiles WHERE user_id = $1)',
-        user.id
-    )
-    rank_row = cursor.fetchone()
-    rank = rank_row[0] if rank_row else 1
-
-    embed.add_field(
-        name="⏱️ Активность",
-        value=f"```{float(voice_hours):.1f}ч в войсе | {messages_count} сообщ. | топ #{rank}```",
-        inline=False
-    )
-
-    embed.add_field(name="Баланс", value=f"```{balance_amount}```", inline=True)
-    embed.add_field(name="Дней на сервере", value=f"```{days_on_server}```", inline=True)
-    embed.add_field(name="Комментарий админа", value=f"```{god_kissed or '—'}```", inline=True)
-
-    # Проверка брака
-    result = await cursor.execute('SELECT user1_id, user2_id FROM marriages WHERE user1_id = $1 OR user2_id = $1', user.id)
-    marriage_data = cursor.fetchone()
-    if marriage_data:
-        partner_id = marriage_data[0] if marriage_data[1] == user.id else marriage_data[1]
-        try:
-            partner = await guild.fetch_member(partner_id)
-            embed.add_field(name="<a:pinkpixelheart:1298391338223403008> Возлюбленные", value=f"```{partner.display_name}```", inline=False)
-        except discord.NotFound:
-            pass
-
-    embed.set_author(name=f"Профиль - {user.display_name}", icon_url=user.avatar.url)
-    embed.set_footer(text="Нажмите на кнопку для управления браком")
-    return embed
-
-
 @app_commands.command(name="me", description="Показать профиль пользователя")
 @app_commands.describe(пользователь="Участник, чей профиль вы хотите просмотреть")
 async def me(interaction: discord.Interaction, пользователь: discord.Member = None):
     global cursor
     пользователь = пользователь or interaction.user
-    embed = await create_profile_embed(cursor, пользователь, interaction.guild)
+
+    await interaction.response.defer()
+
+    image_buffer = await create_profile_image(cursor, пользователь, interaction.guild)
+    profile_file = discord.File(image_buffer, filename="profile.png")
 
     view = ui.View()
 
@@ -730,7 +676,7 @@ async def me(interaction: discord.Interaction, пользователь: discord
 
         marriage_embed = await create_marriage_embed(cursor, i, пользователь)
         marriage_view = await create_marriage_view(cursor, пользователь, i)
-        await i.response.edit_message(embed=marriage_embed, view=marriage_view)
+        await i.response.edit_message(embed=marriage_embed, view=marriage_view, attachments=[])
 
     def format_duration(duration):
         years = duration.days // 365
@@ -981,8 +927,9 @@ async def me(interaction: discord.Interaction, пользователь: discord
                     ephemeral=True
                 )
                 return
-            updated_embed = await create_profile_embed(cursor, user, i.guild)
-            await i.response.edit_message(embed=updated_embed, view=view)
+            updated_buffer = await create_profile_image(cursor, user, i.guild)
+            updated_file = discord.File(updated_buffer, filename="profile.png")
+            await i.response.edit_message(embed=None, attachments=[updated_file], view=view)
 
         button_back.callback = back_callback
         marriage_view.add_item(button_back)
@@ -992,7 +939,7 @@ async def me(interaction: discord.Interaction, пользователь: discord
     button_marriage.callback = marriage_callback
     view.add_item(button_marriage)
 
-    await interaction.response.send_message(embed=embed, view=view)
+    await interaction.followup.send(file=profile_file, view=view)
 
 # ============================================
 # MARRY COMMAND
@@ -2223,10 +2170,72 @@ class ExtendRoleModal(Modal):
 
         await interaction.followup.edit_message(message_id=interaction.message.id, embed=updated_embed, view=updated_view)
 
+class DisplayRoleSelect(discord.ui.Select):
+    """Селект для выбора роли, которая будет отображаться на визуальном профиле (/me)."""
+
+    def __init__(self, parent_view: "DisplayRoleView", role_options: list):
+        options = [
+            discord.SelectOption(label=name[:100], value=name)
+            for name in role_options
+        ]
+        super().__init__(placeholder="Выберите роль для отображения в профиле", options=options, min_values=1, max_values=1)
+        self.parent_view = parent_view
+
+    async def callback(self, interaction: discord.Interaction):
+        global cursor
+        chosen_role_name = self.values[0]
+
+        await cursor.execute(
+            'UPDATE user_profiles SET displayed_role = $1 WHERE user_id = $2',
+            chosen_role_name, interaction.user.id
+        )
+
+        embed = discord.Embed(
+            description=f"Роль **{chosen_role_name}** теперь будет отображаться в вашем профиле (`/me`).",
+            color=discord.Color.from_str('#6e6e6e')
+        )
+        await interaction.response.edit_message(embed=embed, view=None)
+
+
+class DisplayRoleView(discord.ui.View):
+    def __init__(self, role_options: list):
+        super().__init__(timeout=60)
+        self.add_item(DisplayRoleSelect(self, role_options))
+
+
+class InventoryDisplayButton(discord.ui.Button):
+    """Кнопка «Отобразить», открывающая селект выбора роли для профиля (аналогично /room manage)."""
+
+    def __init__(self, owner_id: int, role_options: list):
+        super().__init__(label="Отобразить", style=discord.ButtonStyle.gray, emoji="<:mice:1526013753110433872>")
+        self.owner_id = owner_id
+        self.role_options = role_options
+
+    async def callback(self, interaction: discord.Interaction):
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message("Выбрать отображаемую роль может только владелец инвентаря.", ephemeral=True)
+            return
+
+        view = DisplayRoleView(self.role_options)
+        await interaction.response.send_message(
+            "Выберите роль, которая будет отображаться в вашем профиле:",
+            view=view,
+            ephemeral=True
+        )
+
+
+class InventoryView(discord.ui.View):
+    def __init__(self, owner_id: int, role_options: list):
+        super().__init__(timeout=60)
+        if role_options:
+            self.add_item(InventoryDisplayButton(owner_id, role_options))
+
+
 @role_group.command(name="inventory", description="Показать активные роли и дату их истечения")
 @role_existence_check
 async def inventory(interaction: discord.Interaction, пользователь: discord.User = None):
     global cursor
+    is_self = пользователь is None
     if пользователь is None:
         пользователь = interaction.user
 
@@ -2246,6 +2255,7 @@ async def inventory(interaction: discord.Interaction, пользователь: 
 
     role_list = ""
     warning_emoji = "<:warning:1295095037734031472>"
+    active_role_names = []  # роли, не архивированные и не истёкшие - доступны для отображения в профиле
 
     for index, (role_name, expiration_date, remaining_time, archived) in enumerate(roles, start=1):
         role = discord.utils.get(interaction.guild.roles, name=role_name)
@@ -2279,8 +2289,14 @@ async def inventory(interaction: discord.Interaction, пользователь: 
         warning = warning_emoji if days_left < 3 else ""
         role_list += f"**{index})** {role.mention}{archived_status} - **осталось:** `{remaining_time_str}`{warning}\n"
 
+        if archived != 1 and days_left > 0:
+            active_role_names.append(role_name)
+
     embed.description = role_list if role_list else "Нет активных ролей."
-    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    # Кнопка «Отобразить» доступна только владельцу и только если есть роль, которую можно выбрать
+    view = InventoryView(пользователь.id, active_role_names) if is_self else None
+    await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
 @role_group.command(name="info", description="Получить информацию о роли")
 @app_commands.describe(роль="Упомяните роль для проверки информации")
