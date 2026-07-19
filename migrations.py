@@ -7,6 +7,12 @@ async def run_migrations():
     """Создаёт индексы для ускорения запросов"""
     conn = await asyncpg.connect(DATABASE_URL)
     try:
+        # Колонка для роли, выбранной для отображения в /me (может отсутствовать на старых БД)
+        await conn.execute('''
+            ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS displayed_role TEXT
+        ''')
+        print("✅ Колонка user_profiles.displayed_role создана/проверена")
+
         # Индекс для топов по голосовым часам
         await conn.execute('''
             CREATE INDEX IF NOT EXISTS idx_user_profiles_voice_hours 
