@@ -78,6 +78,17 @@ async def balance(interaction: discord.Interaction, пользователь: di
     пользователь = пользователь or interaction.user
     global cursor
     
+    # ПРОВЕРЯЕМ КЕШ
+    cached = await get_cached(balance_cache_key(пользователь.id))
+    if cached is not None:
+        await interaction.response.send_message(embed=create_embed(
+            description="",
+            color="#696969",
+            author_name=f"Баланс - {пользователь.display_name}",
+            author_icon_url=пользователь.avatar.url
+        ).add_field(name="Монет", value=f"```\n{cached}\n```", inline=False), ephemeral=True)
+        return
+    
     result = await cursor.execute('SELECT balance FROM user_profiles WHERE user_id = $1', пользователь.id)
     row = cursor.fetchone()
     
@@ -87,6 +98,9 @@ async def balance(interaction: discord.Interaction, пользователь: di
         await cursor.execute('INSERT INTO user_profiles (user_id, balance, last_daily_claimed) VALUES ($1, $2, $3)', 
                            пользователь.id, 0, None)
         balance_amount = 0
+    
+    # СОХРАНЯЕМ В КЕШ
+    await set_cached(balance_cache_key(пользователь.id), balance_amount, 60)
     
     await interaction.response.send_message(embed=create_embed(
         description="",
@@ -124,6 +138,11 @@ async def daily(interaction: discord.Interaction):
         new_balance = balance_amount + BONUS_AMOUNT
         await cursor.execute('UPDATE user_profiles SET balance = $1, last_daily_claimed = $2 WHERE user_id = $3', 
                            new_balance, current_time.strftime("%Y-%m-%d %H:%M:%S"), interaction.user.id)
+        
+        from cache import set_cached, balance_cache_key, profile_cache_key
+        await set_cached(balance_cache_key(interaction.user.id), new_balance, 60)
+        await set_cached(profile_cache_key(interaction.user.id), None, 1)  # Инвалидация профиля
+        
         await interaction.response.send_message(embed=create_embed(
             description=f"Вы забрали: {BONUS_AMOUNT} <a:coinonrole:1298391257042784266>",
             color="#6e6e6e",
@@ -134,13 +153,18 @@ async def daily(interaction: discord.Interaction):
     else:
         await cursor.execute('INSERT INTO user_profiles (user_id, balance, last_daily_claimed) VALUES ($1, $2, $3)', 
                            interaction.user.id, BONUS_AMOUNT, current_time.strftime("%Y-%m-%d %H:%M:%S"))
+        
+        from cache import set_cached, balance_cache_key, profile_cache_key
+        await set_cached(balance_cache_key(interaction.user.id), BONUS_AMOUNT, 60)
+        await set_cached(profile_cache_key(interaction.user.id), None, 1)  # Инвалидация профиля
+        
         await interaction.response.send_message(embed=create_embed(
             description=f"Вы забрали: {BONUS_AMOUNT} <a:coinonrole:1298391257042784266>",
             color="#6e6e6e",
             author_name=f"Бонус - {interaction.user.display_name}",
             author_icon_url=interaction.user.avatar.url,
             footer="Возвращайтесь через 24 часа"
-        ), ephemeral=True)  
+        ), ephemeral=True)
 
 @eco_group.command(name="work", description="Поработать и получить монеты (каждые 12 часов)")
 async def work(interaction: discord.Interaction):
@@ -173,6 +197,11 @@ async def work(interaction: discord.Interaction):
         new_balance = (balance_amount or 0) + earned
         await cursor.execute('UPDATE user_profiles SET balance = $1, last_work_claimed = $2 WHERE user_id = $3', 
                            new_balance, current_time.strftime("%Y-%m-%d %H:%M:%S"), interaction.user.id)
+        
+        from cache import set_cached, balance_cache_key, profile_cache_key
+        await set_cached(balance_cache_key(interaction.user.id), new_balance, 60)
+        await set_cached(profile_cache_key(interaction.user.id), None, 1)  # Инвалидация профиля
+        
         await interaction.response.send_message(embed=create_embed(
             description=f"Вы заработали: {earned} <a:coinonrole:1298391257042784266>",
             color="#6e6e6e",
@@ -183,13 +212,18 @@ async def work(interaction: discord.Interaction):
     else:
         await cursor.execute('INSERT INTO user_profiles (user_id, balance, last_work_claimed) VALUES ($1, $2, $3)', 
                            interaction.user.id, earned, current_time.strftime("%Y-%m-%d %H:%M:%S"))
+        
+        from cache import set_cached, balance_cache_key, profile_cache_key
+        await set_cached(balance_cache_key(interaction.user.id), earned, 60)
+        await set_cached(profile_cache_key(interaction.user.id), None, 1)  # Инвалидация профиля
+        
         await interaction.response.send_message(embed=create_embed(
             description=f"Вы заработали: {earned} <a:coinonrole:1298391257042784266>",
             color="#6e6e6e",
             author_name=f"Работа - {interaction.user.display_name}",
             author_icon_url=interaction.user.avatar.url,
             footer="Возвращайтесь через 12 часов"
-        ), ephemeral=True)  
+        ), ephemeral=True)
 
 @eco_group.command(name="purse", description="Администраторская команда для выдачи средств пользователю")
 @app_commands.describe(
@@ -216,9 +250,15 @@ async def purse(interaction: discord.Interaction, пользователь: disc
     recipient_balance = cursor.fetchone()
 
     if recipient_balance:
+        new_balance = recipient_balance[0] + сумма
         await cursor.execute('UPDATE user_profiles SET balance = balance + $1 WHERE user_id = $2', сумма, пользователь.id)
     else:
+        new_balance = сумма
         await cursor.execute('INSERT INTO user_profiles (user_id, balance) VALUES ($1, $2)', пользователь.id, сумма)
+
+    from cache import set_cached, delete_cached, balance_cache_key, profile_cache_key
+    await set_cached(balance_cache_key(пользователь.id), new_balance, 60)
+    await delete_cached(profile_cache_key(пользователь.id))
 
     await interaction.response.send_message(embed=create_embed(
         description=f"Вы успешно выдали {сумма} монет {пользователь.mention}.",
@@ -265,7 +305,12 @@ async def take(interaction: discord.Interaction, пользователь: disco
         ), ephemeral=True)
         return
 
+    new_balance = user_balance[0] - сумма
     await cursor.execute('UPDATE user_profiles SET balance = balance - $1 WHERE user_id = $2', сумма, пользователь.id)
+
+    from cache import set_cached, delete_cached, balance_cache_key, profile_cache_key
+    await set_cached(balance_cache_key(пользователь.id), new_balance, 60)
+    await delete_cached(profile_cache_key(пользователь.id))
 
     await interaction.response.send_message(embed=create_embed(
         description=f"Вы успешно изъяли {сумма} монет у {пользователь.mention}.",
@@ -317,6 +362,13 @@ async def transfer(interaction: discord.Interaction, пользователь: d
             await cursor.execute('UPDATE user_profiles SET balance = balance + $1 WHERE user_id = $2', total_amount, пользователь.id)
         else:
             await cursor.execute('INSERT INTO user_profiles (user_id, balance) VALUES ($1, $2)', пользователь.id, total_amount)
+
+        # ⬇️⬇️⬇️ ЭТИ СТРОЧКИ ДОБАВИТЬ ⬇️⬇️⬇️
+        from cache import set_cached, delete_cached, balance_cache_key, profile_cache_key
+        await set_cached(balance_cache_key(interaction.user.id), sender_balance[0] - сумма, 60)
+        await set_cached(balance_cache_key(пользователь.id), (recipient_balance[0] if recipient_balance else 0) + total_amount, 60)
+        await delete_cached(profile_cache_key(interaction.user.id))
+        await delete_cached(profile_cache_key(пользователь.id))
 
         await interaction.response.send_message(embed=create_embed(
             description=f"Вы успешно перевели {сумма} монет {пользователь.mention}.",
@@ -481,6 +533,16 @@ async def top_role(interaction: discord.Interaction):
 @top_group.command(name="hours", description="Показать топ пользователей по часам в войсе")
 async def top_hours(interaction: discord.Interaction):
     global cursor
+    
+    # ПРОВЕРЯЕМ КЕШ
+    cached = await get_cached(top_cache_key("hours"))
+    if cached:
+        icon_url = interaction.user.avatar.url if interaction.user.avatar else None
+        view = TopPaginatorView("Топ пользователей по часам в войсе", icon_url, cached, interaction.user.id)
+        await interaction.response.send_message(embed=view.render_embed(), view=view)
+        view.message = await interaction.original_response()
+        return
+    
     result = await cursor.execute(f'SELECT user_id, voice_hours FROM user_profiles ORDER BY voice_hours DESC LIMIT {TOP_FETCH_LIMIT}')
     top_users = cursor.fetchall()
 
@@ -501,6 +563,9 @@ async def top_hours(interaction: discord.Interaction):
     if not user_entries:
         await interaction.response.send_message(embed=Embed(description="Нет данных.", color=0x6e6e6e))
         return
+
+    # СОХРАНЯЕМ В КЕШ
+    await set_cached(top_cache_key("hours"), user_entries, 3600)
 
     icon_url = interaction.user.avatar.url if interaction.user.avatar else None
     view = TopPaginatorView("Топ пользователей по часам в войсе", icon_url, user_entries, interaction.user.id)
