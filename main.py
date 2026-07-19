@@ -75,7 +75,7 @@ async def init_db():
                     last_daily_claimed TEXT,
                     last_work_claimed TEXT,
                     god_kissed TEXT DEFAULT '—',
-                    voice_hours NUMERIC DEFAULT 0,
+                    voice_hours NUMERIC(10,2) DEFAULT 0,
                     displayed_role TEXT,
                     messages_count INTEGER DEFAULT 0
                 )
