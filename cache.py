@@ -1,12 +1,13 @@
+from redis_client import redis_client
 import json
-from main import redis_client
 
 CACHE_TTL = {
-    'profile': 300,   # 5 минут
-    'top': 3600,      # 1 час
-    'balance': 60,    # 1 минута
-    'room': 600,      # 10 минут
+    'profile': 300,
+    'top': 3600,
+    'balance': 60,
+    'room': 600,
 }
+
 
 async def get_cached(key: str):
     if redis_client is None:
@@ -19,6 +20,7 @@ async def get_cached(key: str):
     except:
         return None
 
+
 async def set_cached(key: str, value, ttl: int = 300):
     if redis_client is None:
         return
@@ -27,6 +29,7 @@ async def set_cached(key: str, value, ttl: int = 300):
     except:
         pass
 
+
 async def delete_cached(key: str):
     if redis_client is None:
         return
@@ -34,6 +37,7 @@ async def delete_cached(key: str):
         await redis_client.delete(key)
     except:
         pass
+
 
 async def delete_pattern(pattern: str):
     if redis_client is None:
@@ -45,11 +49,14 @@ async def delete_pattern(pattern: str):
     except:
         pass
 
+
 def profile_cache_key(user_id: int):
     return f"profile:{user_id}"
 
+
 def balance_cache_key(user_id: int):
     return f"balance:{user_id}"
+
 
 def top_cache_key(top_type: str):
     return f"top:{top_type}"
