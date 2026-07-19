@@ -1,6 +1,7 @@
 import io
 import os
 import random
+
 import discord
 from PIL import Image, ImageDraw, ImageFont
 
@@ -16,53 +17,57 @@ MALE_ROLE_ID = 1126893214536827050
 FEMALE_ROLE_ID = 1126893217405739090
 
 # --------------------------------------------------------------------------
-# КООРДИНАТЫ РАЗМЕТКИ (подобраны по PlaceholderProfile.png, 1672x941).
-# Если версия картинки поменяется/сдвинется — поправь константы ниже.
+# КООРДИНАТЫ РАЗМЕТКИ (подобраны по PlaceholderProfile.png, 1672x941,
+# сверены точечным пиксельным замером границ рамок в шаблоне).
 # Для калибровки есть DEBUG_GRID = True (см. ниже).
 # --------------------------------------------------------------------------
 
 DEBUG_GRID = False  # True -> поверх картинки рисуется сетка 50px для калибровки координат
 
-# Аватар (круглая рамка по центру сверху)
-AVATAR_CENTER = (825, 375)
-AVATAR_RADIUS = 122          # итоговый радиус вставляемого аватара (чуть меньше рамки, чтобы не наезжать на обводку)
+# Аватар (круглая рамка по центру сверху).
+# AVATAR_RADIUS чуть меньше радиуса рамки в шаблоне (~100px), чтобы аватар
+# не наезжал на неё, плюс сверху рисуется собственная чёткая обводка.
+AVATAR_CENTER = (831, 359)
+AVATAR_RADIUS = 96
 AVATAR_SIZE = AVATAR_RADIUS * 2
+AVATAR_RING_WIDTH = 5
+AVATAR_RING_COLOR = (208, 196, 184, 235)  # тёплый серебристо-бежевый, под цвет рамки шаблона
+AVATAR_SUPERSAMPLE = 4  # антиалиасинг круглой маски, чтобы не было "рваных" пикселей по краю
 
 # Ник под аватаром
-USERNAME_CENTER_X = 825
+USERNAME_CENTER_X = 831
 USERNAME_Y = 515
 USERNAME_MAX_WIDTH = 430
 USERNAME_FONT_SIZE = 34
 
-# "На сервере с ..." — приподнято и мельче, чем ник
-JOINED_CENTER_X = 825
-JOINED_Y = 695
+# "На сервере с ..." — по центру, у самого нижнего края центрального прямоугольника
+JOINED_CENTER_X = 831
+JOINED_Y = 736
 JOINED_MAX_WIDTH = 460
 JOINED_FONT_SIZE = 18
 
 # Левая колонка (Личная роль / Личная комната / Статус брака).
-# Значения центрируются по центру прямоугольника (как ник) и стоят ниже,
-# ближе к нижнему краю каждого блока.
-LEFT_CENTER_X = 340
-LEFT_MAX_WIDTH = 380
+# Значение центрируется в зоне между нижним краем иконки-эмодзи и нижним
+# краем прямоугольника (не у самого низа, а по центру этой зоны).
+LEFT_CENTER_X = 357
+LEFT_MAX_WIDTH = 400
 LEFT_VALUE_FONT_SIZE = 26
 LEFT_VALUES_Y = {
-    "role": 335,
-    "room": 535,
+    "role": 343,
+    "room": 540,
     "marriage": 735,
 }
 
 # Правая колонка (Баланс / В войсе / Сообщения / Место в топе).
-# Значения стоят на той же строке, что и подпись (на уровне линии под ней),
-# прижаты к правому краю блока.
-RIGHT_BLOCK_RIGHT_EDGE = 1520
+# Значения стоят на одной строке с подписью, прижаты к правому краю блока.
+RIGHT_BLOCK_RIGHT_EDGE = 1517
 RIGHT_MAX_WIDTH = 200
 RIGHT_VALUE_FONT_SIZE = 26
 RIGHT_VALUES_Y = {
-    "balance": 235,
-    "voice": 395,
+    "balance": 254,
+    "voice": 404,
     "messages": 555,
-    "rank": 715,
+    "rank": 705,
 }
 
 TEXT_COLOR = (255, 255, 255)
@@ -90,31 +95,65 @@ def _truncate_to_width(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.Fre
     return (truncated.rstrip() + ellipsis) if truncated else ellipsis
 
 
+def _measure(draw, text: str, font) -> tuple:
+    """Возвращает (визуальная_ширина, левый_бок) по фактическому bbox текста,
+    чтобы центрирование/выравнивание не съезжало из-за боковых отступов шрифта."""
+    bbox = draw.textbbox((0, 0), text, font=font)
+    return bbox[2] - bbox[0], bbox[0]
+
+
 def _draw_centered_text(draw, center_x: int, y: int, text: str, font, max_width: int, fill=TEXT_COLOR) -> None:
     text = _truncate_to_width(draw, text, font, max_width)
-    width = draw.textlength(text, font=font)
-    draw.text((center_x - width / 2, y), text, font=font, fill=fill)
+    width, left_bearing = _measure(draw, text, font)
+    draw.text((center_x - width / 2 - left_bearing, y), text, font=font, fill=fill)
 
 
 def _draw_right_aligned_text(draw, right_x: int, y: int, text: str, font, max_width: int, fill=TEXT_COLOR) -> None:
     text = _truncate_to_width(draw, text, font, max_width)
-    width = draw.textlength(text, font=font)
-    draw.text((right_x - width, y), text, font=font, fill=fill)
+    width, left_bearing = _measure(draw, text, font)
+    draw.text((right_x - width - left_bearing, y), text, font=font, fill=fill)
 
 
 async def _fetch_circular_avatar(member: discord.abc.User, diameter: int) -> Image.Image:
+    """Скачивает аватар и вырезает его в круг с антиалиасингом (через супersampling),
+    чтобы край получился гладким, а не пиксельным/рваным."""
     asset = member.display_avatar.replace(size=256, format="png")
     avatar_bytes = await asset.read()
 
-    avatar = Image.open(io.BytesIO(avatar_bytes)).convert("RGBA")
-    avatar = avatar.resize((diameter, diameter), Image.LANCZOS)
+    big_diameter = diameter * AVATAR_SUPERSAMPLE
 
-    mask = Image.new("L", (diameter, diameter), 0)
-    mask_draw = ImageDraw.Draw(mask)
-    mask_draw.ellipse((0, 0, diameter, diameter), fill=255)
-    avatar.putalpha(mask)
+    avatar_big = Image.open(io.BytesIO(avatar_bytes)).convert("RGBA")
+    avatar_big = avatar_big.resize((big_diameter, big_diameter), Image.LANCZOS)
 
+    mask_big = Image.new("L", (big_diameter, big_diameter), 0)
+    mask_draw = ImageDraw.Draw(mask_big)
+    mask_draw.ellipse((0, 0, big_diameter, big_diameter), fill=255)
+    avatar_big.putalpha(mask_big)
+
+    avatar = avatar_big.resize((diameter, diameter), Image.LANCZOS)
     return avatar
+
+
+def _draw_avatar_ring(base: Image.Image, center: tuple, radius: int, width: int, color: tuple) -> None:
+    """Рисует ровную (антиалиased) обводку вокруг аватара поверх шва между
+    аватаром и фоном — скрывает пиксельные неровности по краю круга."""
+    ss = AVATAR_SUPERSAMPLE
+    pad = width + 4
+    box_size = (radius + pad) * 2
+
+    ring_big = Image.new("RGBA", (box_size * ss, box_size * ss), (0, 0, 0, 0))
+    ring_draw = ImageDraw.Draw(ring_big)
+    c = box_size * ss / 2
+    r = radius * ss
+    ring_draw.ellipse(
+        (c - r, c - r, c - r + 2 * r, c - r + 2 * r),
+        outline=color,
+        width=width * ss,
+    )
+    ring = ring_big.resize((box_size, box_size), Image.LANCZOS)
+
+    paste_pos = (int(center[0] - box_size / 2), int(center[1] - box_size / 2))
+    base.alpha_composite(ring, paste_pos)
 
 
 def _draw_debug_grid(image: Image.Image) -> None:
@@ -234,10 +273,11 @@ async def create_profile_image(cursor, member: discord.Member, guild: discord.Gu
     font_left_value = _load_font(FONT_REGULAR_PATH, LEFT_VALUE_FONT_SIZE)
     font_right_value = _load_font(FONT_REGULAR_PATH, RIGHT_VALUE_FONT_SIZE)
 
-    # аватар
+    # аватар (антиалиased) + обводка поверх шва
     avatar = await _fetch_circular_avatar(member, AVATAR_SIZE)
     avatar_pos = (AVATAR_CENTER[0] - AVATAR_RADIUS, AVATAR_CENTER[1] - AVATAR_RADIUS)
-    base.paste(avatar, avatar_pos, avatar)
+    base.alpha_composite(avatar, avatar_pos)
+    _draw_avatar_ring(base, AVATAR_CENTER, AVATAR_RADIUS, AVATAR_RING_WIDTH, AVATAR_RING_COLOR)
 
     # ник
     _draw_centered_text(draw, USERNAME_CENTER_X, USERNAME_Y, member.display_name, font_username, USERNAME_MAX_WIDTH)
@@ -245,12 +285,12 @@ async def create_profile_image(cursor, member: discord.Member, guild: discord.Gu
     # дата на сервере
     _draw_centered_text(draw, JOINED_CENTER_X, JOINED_Y, f"На сервере с {joined_str}г", font_joined, JOINED_MAX_WIDTH, fill=MUTED_COLOR)
 
-    # левая колонка - центрируется в прямоугольнике, ниже подписи
+    # левая колонка
     _draw_centered_text(draw, LEFT_CENTER_X, LEFT_VALUES_Y["role"], displayed_role.name if displayed_role else "Отсутствует", font_left_value, LEFT_MAX_WIDTH)
     _draw_centered_text(draw, LEFT_CENTER_X, LEFT_VALUES_Y["room"], room_name if room_name else "Отсутствует", font_left_value, LEFT_MAX_WIDTH)
     _draw_centered_text(draw, LEFT_CENTER_X, LEFT_VALUES_Y["marriage"], marriage_text, font_left_value, LEFT_MAX_WIDTH)
 
-    # правая колонка - на строке подписи, прижато к правому краю блока
+    # правая колонка
     _draw_right_aligned_text(draw, RIGHT_BLOCK_RIGHT_EDGE, RIGHT_VALUES_Y["balance"], f"{balance}", font_right_value, RIGHT_MAX_WIDTH)
     _draw_right_aligned_text(draw, RIGHT_BLOCK_RIGHT_EDGE, RIGHT_VALUES_Y["voice"], f"{voice_hours:.1f}ч", font_right_value, RIGHT_MAX_WIDTH)
     _draw_right_aligned_text(draw, RIGHT_BLOCK_RIGHT_EDGE, RIGHT_VALUES_Y["messages"], f"{messages_count}", font_right_value, RIGHT_MAX_WIDTH)
