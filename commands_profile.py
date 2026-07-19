@@ -42,7 +42,7 @@ USERNAME_FONT_SIZE = 34
 
 # "На сервере с ..." — по центру, у самого нижнего края центрального прямоугольника
 JOINED_CENTER_X = 831
-JOINED_Y = 736
+JOINED_Y = 758
 JOINED_MAX_WIDTH = 460
 JOINED_FONT_SIZE = 18
 
@@ -292,7 +292,7 @@ async def create_profile_image(cursor, member: discord.Member, guild: discord.Gu
 
     # правая колонка
     _draw_right_aligned_text(draw, RIGHT_BLOCK_RIGHT_EDGE, RIGHT_VALUES_Y["balance"], f"{balance}", font_right_value, RIGHT_MAX_WIDTH)
-    _draw_right_aligned_text(draw, RIGHT_BLOCK_RIGHT_EDGE, RIGHT_VALUES_Y["voice"], f"{voice_hours:.1f}ч", font_right_value, RIGHT_MAX_WIDTH)
+    _draw_right_aligned_text(draw, RIGHT_BLOCK_RIGHT_EDGE, RIGHT_VALUES_Y["voice"], f"{int(voice_hours)}ч", font_right_value, RIGHT_MAX_WIDTH)
     _draw_right_aligned_text(draw, RIGHT_BLOCK_RIGHT_EDGE, RIGHT_VALUES_Y["messages"], f"{messages_count}", font_right_value, RIGHT_MAX_WIDTH)
     _draw_right_aligned_text(draw, RIGHT_BLOCK_RIGHT_EDGE, RIGHT_VALUES_Y["rank"], f"#{rank}", font_right_value, RIGHT_MAX_WIDTH)
 
