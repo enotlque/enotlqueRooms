@@ -33,7 +33,7 @@ AVATAR_SIZE = AVATAR_RADIUS * 2
 AVATAR_RING_WIDTH = 5
 AVATAR_RING_COLOR = (208, 196, 184, 235)  # тёплый серебристо-бежевый, под цвет рамки шаблона
 AVATAR_SUPERSAMPLE = 4  # антиалиасинг круглой маски, чтобы не было "рваных" пикселей по краю
-
+DEBUG_GRID = True
 # Ник под аватаром
 USERNAME_CENTER_X = 831
 USERNAME_Y = 515
