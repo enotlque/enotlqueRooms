@@ -264,9 +264,12 @@ setup_role_delete_listener(bot)
 # === ON_READY ===
 @bot.event
 async def on_ready():
-    # Инициализация БД и Redis
+    # Инициализация БД и RediS
     await init_db_pool()
     await init_redis()
+
+    from migrations import run_migrations
+    await run_migrations()
     
     await reconcile_deleted_roles(bot)
     
@@ -283,7 +286,6 @@ async def on_ready():
     start_role_expiry_task(bot)
     print('✅ Задача автопроверки ролей запущена')
 
-    # ⬇️⬇️⬇️ ЗАДЕРЖКА ПЕРЕД СИНХРОНИЗАЦИЕЙ (ЗАЩИТА ОТ 429) ⬇️⬇️⬇️
     await asyncio.sleep(5)
     
     try:
