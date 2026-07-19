@@ -6,6 +6,13 @@ import asyncio
 import os
 import threading
 import asyncpg
+from asyncpg import Pool
+import redis.asyncio as redis
+from rate_limiter import safe_discord_call, rate_limiter
+
+# === ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ===
+db_pool: Pool = None
+redis_client: redis.Redis = None
 
 # === ВЕБ-СЕРВЕР ДЛЯ RENDER ===
 from flask import Flask
@@ -39,8 +46,12 @@ CATEGORY_ID = 1126627249001607179
 restricted_role_id = 1295482170374095049
 
 DATABASE_URL = os.environ.get('DATABASE_URL')
+REDIS_URL = os.environ.get('REDIS_URL')
 
-async def init_db():
+
+# === ПУЛ СОЕДИНЕНИЙ POSTGRESQL ===
+async def init_db_pool():
+    global db_pool
     import socket
     original_getaddrinfo = socket.getaddrinfo
     
@@ -50,8 +61,16 @@ async def init_db():
     socket.getaddrinfo = ipv4_only_getaddrinfo
     
     try:
-        conn = await asyncpg.connect(DATABASE_URL, statement_cache_size=0)
-        try:
+        db_pool = await asyncpg.create_pool(
+            DATABASE_URL,
+            min_size=3,
+            max_size=20,
+            max_inactive_connection_lifetime=300,
+            statement_cache_size=0
+        )
+        print("✅ Пул соединений PostgreSQL создан")
+        
+        async with db_pool.acquire() as conn:
             # Таблица для комнат
             await conn.execute('''
                 CREATE TABLE IF NOT EXISTS room_leadership (
@@ -125,21 +144,56 @@ async def init_db():
                 )
             ''')
             print("✅ Таблица lobby_bindings создана/проверена")
-
-        finally:
-            await conn.close()
+            
     finally:
         socket.getaddrinfo = original_getaddrinfo
 
-async def get_db_connection():
-    return await asyncpg.connect(DATABASE_URL, statement_cache_size=0)
 
+async def get_db_connection():
+    """Возвращает соединение из пула"""
+    return await db_pool.acquire()
+
+
+async def release_db_connection(conn):
+    """Возвращает соединение обратно в пул"""
+    await db_pool.release(conn)
+
+
+# === ПОДКЛЮЧЕНИЕ REDIS ===
+async def init_redis():
+    global redis_client
+    try:
+        if REDIS_URL:
+            redis_client = redis.Redis.from_url(
+                REDIS_URL,
+                decode_responses=True,
+                max_connections=20,
+                socket_timeout=5,
+                socket_connect_timeout=5
+            )
+            await redis_client.ping()
+            print("✅ Redis подключён")
+        else:
+            print("⚠️ REDIS_URL не найден, кеш отключён")
+            redis_client = None
+    except Exception as e:
+        print(f"⚠️ Redis не подключён: {e}")
+        redis_client = None
+
+
+# === ОБЁРТКА ДЛЯ БАЗЫ ДАННЫХ ===
 class PgWrapper:
     def __init__(self):
         self.last_result = None
+        self._conn = None
+    
+    async def _get_conn(self):
+        if self._conn is None:
+            self._conn = await get_db_connection()
+        return self._conn
     
     async def execute(self, query, *args):
-        conn = await get_db_connection()
+        conn = await self._get_conn()
         try:
             if query.strip().upper().startswith('SELECT'):
                 result = await conn.fetch(query, *args)
@@ -149,8 +203,11 @@ class PgWrapper:
                 result = await conn.execute(query, *args)
                 self.last_result = result
                 return result
-        finally:
-            await conn.close()
+        except Exception as e:
+            if self._conn:
+                await release_db_connection(self._conn)
+                self._conn = None
+            raise e
     
     def fetchone(self):
         if self.last_result and len(self.last_result) > 0:
@@ -160,10 +217,11 @@ class PgWrapper:
     def fetchall(self):
         return self.last_result if self.last_result else []
 
+
 cursor = PgWrapper()
 conn = cursor
 
-# === ИМПОРТ И ПЕРЕДАЧА CURSOR В ЭКОНОМИЧЕСКИЙ МОДУЛЬ ===
+# === ИМПОРТ МОДУЛЕЙ ===
 from commands_room import setup_room_commands
 from commands_staff import setup_staff_commands
 from commands_lobby import setup_lobby_commands
@@ -186,7 +244,7 @@ from commands_economy import (
     reconcile_deleted_roles,
 )
 
-# === РЕГИСТРАЦИЯ ===
+# === РЕГИСТРАЦИЯ КОМАНД ===
 bot.tree.add_command(eco_group)
 bot.tree.add_command(role_group)
 bot.tree.add_command(slots_group)
@@ -202,9 +260,14 @@ setup_lobby_commands(bot, cursor)
 setup_activity_tracking(bot, cursor, get_db_connection)
 setup_role_delete_listener(bot)
 
+
+# === ON_READY ===
 @bot.event
 async def on_ready():
-    await init_db()
+    # Инициализация БД и Redis
+    await init_db_pool()
+    await init_redis()
+    
     await reconcile_deleted_roles(bot)
     
     await bot.change_presence(
@@ -220,15 +283,28 @@ async def on_ready():
     start_role_expiry_task(bot)
     print('✅ Задача автопроверки ролей запущена')
 
-    await asyncio.sleep(5)  # Ждём 5 секунд перед синхронизацией
+    # ⬇️⬇️⬇️ ЗАДЕРЖКА ПЕРЕД СИНХРОНИЗАЦИЕЙ (ЗАЩИТА ОТ 429) ⬇️⬇️⬇️
+    await asyncio.sleep(5)
     
     try:
         synced = await bot.tree.sync()
         print(f'✅ Synced {len(synced)} command(s)')
         for cmd in synced:
             print(f'  - /{cmd.name}')
+    except discord.HTTPException as e:
+        if e.status == 429:
+            print(f"⚠️ Rate limit при синхронизации, ждём {e.retry_after}с...")
+            await asyncio.sleep(e.retry_after + 1)
+            try:
+                synced = await bot.tree.sync()
+                print(f'✅ Synced {len(synced)} command(s) после ожидания')
+            except Exception as retry_error:
+                print(f"❌ Ошибка повторной синхронизации: {retry_error}")
+        else:
+            print(f"❌ Error syncing: {e}")
     except Exception as e:
         print(f"❌ Error syncing: {e}")
+
 
 @bot.event
 async def on_error(event, *args, **kwargs):
@@ -236,4 +312,7 @@ async def on_error(event, *args, **kwargs):
     import traceback
     traceback.print_exc()
 
-bot.run(TOKEN)
+
+# === ЗАПУСК БОТА ===
+if __name__ == "__main__":
+    bot.run(TOKEN)
