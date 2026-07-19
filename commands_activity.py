@@ -53,12 +53,12 @@ def _snapshot_guild_voice_state(bot: commands.Bot):
 
 @tasks.loop(seconds=TICK_INTERVAL)
 async def voice_tick():
-    increment = TICK_INTERVAL / 3600  # часы за один тик
+    increment = round(TICK_INTERVAL / 3600, 6)  # 0.016667 -> 6 знаков
     for channel_id, members in list(_voice_members.items()):
         eligible_ids = [uid for uid, (member, vs) in members.items() if _is_eligible(vs)]
         if len(eligible_ids) >= 2:
             for uid in eligible_ids:
-                _pending_hours[uid] = _pending_hours.get(uid, 0.0) + increment
+                _pending_hours[uid] = round(_pending_hours.get(uid, 0.0) + increment, 2)
 
 
 @tasks.loop(seconds=FLUSH_INTERVAL)
