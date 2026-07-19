@@ -220,6 +220,8 @@ async def on_ready():
     start_role_expiry_task(bot)
     print('✅ Задача автопроверки ролей запущена')
 
+    await asyncio.sleep(5)  # Ждём 5 секунд перед синхронизацией
+    
     try:
         synced = await bot.tree.sync()
         print(f'✅ Synced {len(synced)} command(s)')
