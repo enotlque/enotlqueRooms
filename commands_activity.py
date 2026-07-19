@@ -82,8 +82,9 @@ async def flush_activity():
         for uid in user_ids
     ]
 
-    conn = await _get_connection()
+    conn = None
     try:
+        conn = await _get_connection()
         await conn.executemany(
             '''
             INSERT INTO user_profiles (user_id, voice_hours, messages_count)
@@ -96,14 +97,18 @@ async def flush_activity():
         )
         print(f"✅ Activity flush: {len(rows)} пользователей обновлено")
     except Exception as e:
-        # не теряем данные - возвращаем в буфер для следующей попытки
+        # Возвращаем данные в буфер
         for uid, h in hours_snapshot.items():
             _pending_hours[uid] = _pending_hours.get(uid, 0.0) + h
         for uid, m in messages_snapshot.items():
             _pending_messages[uid] = _pending_messages.get(uid, 0) + m
         print(f"❌ Ошибка флаша activity: {e}")
     finally:
-        await conn.close()
+        if conn:
+            try:
+                await conn.close()
+            except:
+                pass
 
 
 # --- подключение к боту -------------------------------------------------------------
