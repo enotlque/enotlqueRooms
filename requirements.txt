@@ -3,3 +3,4 @@ Flask
 asyncpg
 psycopg2-binary
 Pillow
+redis
