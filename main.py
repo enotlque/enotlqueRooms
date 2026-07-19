@@ -7,12 +7,11 @@ import os
 import threading
 import asyncpg
 from asyncpg import Pool
-import redis.asyncio as redis
 from rate_limiter import safe_discord_call, rate_limiter
+from redis_client import init_redis
 
 # === ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ===
 db_pool: Pool = None
-redis_client: redis.Redis = None
 
 # === ВЕБ-СЕРВЕР ДЛЯ RENDER ===
 from flask import Flask
@@ -157,29 +156,6 @@ async def get_db_connection():
 async def release_db_connection(conn):
     """Возвращает соединение обратно в пул"""
     await db_pool.release(conn)
-
-
-# === ПОДКЛЮЧЕНИЕ REDIS ===
-async def init_redis():
-    global redis_client
-    try:
-        if REDIS_URL:
-            redis_client = redis.Redis.from_url(
-                REDIS_URL,
-                decode_responses=True,
-                max_connections=20,
-                socket_timeout=5,
-                socket_connect_timeout=5
-            )
-            await redis_client.ping()
-            print("✅ Redis подключён")
-        else:
-            print("⚠️ REDIS_URL не найден, кеш отключён")
-            redis_client = None
-    except Exception as e:
-        print(f"⚠️ Redis не подключён: {e}")
-        redis_client = None
-
 
 # === ОБЁРТКА ДЛЯ БАЗЫ ДАННЫХ ===
 class PgWrapper:
