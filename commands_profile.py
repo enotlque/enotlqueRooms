@@ -9,7 +9,7 @@ from PIL import Image, ImageDraw, ImageFont
 # Генератор картинки профиля (используется командой /me из commands_economy.py)
 # ============================================
 
-TEMPLATE_PATH = "PlaceholderProfile.png"
+TEMPLATE_PATH = "PlaceholderProfile1.png"
 FONT_BOLD_PATH = "ProximaNova-Bold.ttf"
 FONT_REGULAR_PATH = "ProximaNova-Regular.ttf"
 
