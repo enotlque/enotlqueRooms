@@ -6,20 +6,20 @@ from datetime import datetime
 from PIL import Image, ImageDraw, ImageFont
 
 # ============================================
-# Генератор картинки профиля (используется командой /me из commands_economy.py)
+# Генератор картинки профиля
 # ============================================
 
 TEMPLATE_PATH = "PlaceholderProfile1.png"
 FONT_BOLD_PATH = "ProximaNova-Bold.ttf"
 
 # --------------------------------------------------------------------------
-# КООРДИНАТЫ РАЗМЕТКИ ДЛЯ РАЗМЕРА 1200x640
+# КООРДИНАТЫ ДЛЯ РАЗМЕРА 1200x640 (откалибровано по скриншоту)
 # --------------------------------------------------------------------------
 
-DEBUG_GRID = True  # True -> поверх картинки рисуется сетка 50px для калибровки координат
+DEBUG_GRID = True  # Пока оставлю для финальной калибровки
 
-# Аватар (круглая рамка по центру сверху).
-AVATAR_CENTER = (600, 180)  # центр по X, чуть выше середины
+# Аватар
+AVATAR_CENTER = (600, 160)  # чуть выше
 AVATAR_RADIUS = 70
 AVATAR_SIZE = AVATAR_RADIUS * 2
 AVATAR_RING_WIDTH = 2
@@ -28,56 +28,58 @@ AVATAR_SUPERSAMPLE = 4
 
 # Ник под аватаром
 USERNAME_CENTER_X = 600
-USERNAME_Y = 300
+USERNAME_Y = 275
 USERNAME_MAX_WIDTH = 350
 USERNAME_FONT_SIZE = 32
 
-# "На сервере с ..." — по центру, у самого нижнего края центрального прямоугольника
+# "На сервере с ..." 
 JOINED_CENTER_X = 600
-JOINED_Y = 480
+JOINED_Y = 500
 JOINED_MAX_WIDTH = 350
 JOINED_FONT_SIZE = 16
 
-# Левая колонка (Брачный профиль / Личная роль / Личная комната).
-# Текст выравнивается по левому краю
+# ЛЕВАЯ КОЛОНКА (Брачный профиль / Личная роль / Личная комната)
 LEFT_X = 140
 LEFT_MAX_WIDTH = 250
 LEFT_VALUE_FONT_SIZE = 22
+
+# Значения левой колонки (то что должно отображаться)
 LEFT_VALUES_Y = {
-    "role": 175,
-    "room": 300,
-    "marriage": 425,
+    "marriage": 185,    # "enotlque ♥ ..." или "Отсутствует"
+    "role": 310,        # "gotwelvevmbgfldsfcvsq"
+    "room": 435,        # "testtesttesttesttesttest..."
 }
 
-# Блок брака — центрируется внутри прямоугольника
+# Блок брака — дополнительная строка "вместе N дней"
 MARRIAGE_CENTER_X = LEFT_X + LEFT_MAX_WIDTH // 2
-MARRIAGE_DAYS_Y_OFFSET = 28
+MARRIAGE_DAYS_Y_OFFSET = 30  # смещение под "вместе 2 дней"
 
-# Правая колонка (Баланс / В войсе / Сообщения / Место в топе).
+# ПРАВАЯ КОЛОНКА (Баланс / В войсе / Сообщения / Место в топе)
 RIGHT_BLOCK_RIGHT_EDGE = 1060
-RIGHT_MAX_WIDTH = 180
+RIGHT_MAX_WIDTH = 200
 RIGHT_VALUE_FONT_SIZE = 22
+
+# Значения правой колонки
 RIGHT_VALUES_Y = {
-    "balance": 175,
-    "voice": 300,
-    "messages": 425,
-    "rank": 550,  # немного ниже, чтобы поместилось
+    "balance": 185,     # "1520" (пример)
+    "voice": 310,       # "144" (часы)
+    "messages": 435,    # "15" (сообщения)
+    "rank": 560,        # "#1"
 }
 
-# Весь текст в профиле — чистый белый
+# Цвет текста
 TEXT_COLOR = (255, 255, 255)
 
 
 def _load_font(path: str, size: int) -> ImageFont.FreeTypeFont:
     if not os.path.exists(path):
         raise FileNotFoundError(
-            f"Шрифт '{path}' не найден рядом с ботом. Положи файл ProximaNova-Bold.ttf в корень проекта."
+            f"Шрифт '{path}' не найден. Положи файл ProximaNova-Bold.ttf в корень проекта."
         )
     return ImageFont.truetype(path, size)
 
 
 def _truncate_to_width(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.FreeTypeFont, max_width: int) -> str:
-    """Обрезает текст под ширину max_width, добавляя '...' если не помещается."""
     if draw.textlength(text, font=font) <= max_width:
         return text
 
@@ -90,7 +92,6 @@ def _truncate_to_width(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.Fre
 
 
 def _measure(draw, text: str, font) -> tuple:
-    """Возвращает (визуальная_ширина, левый_бок) по фактическому bbox текста."""
     bbox = draw.textbbox((0, 0), text, font=font)
     return bbox[2] - bbox[0], bbox[0]
 
@@ -113,7 +114,6 @@ def _draw_right_aligned_text(draw, right_x: int, y: int, text: str, font, max_wi
 
 
 async def _fetch_circular_avatar(member: discord.abc.User, diameter: int) -> Image.Image:
-    """Скачивает аватар и вырезает его в круг с антиалиасингом."""
     asset = member.display_avatar.replace(size=256, format="png")
     avatar_bytes = await asset.read()
 
@@ -132,7 +132,6 @@ async def _fetch_circular_avatar(member: discord.abc.User, diameter: int) -> Ima
 
 
 def _draw_avatar_ring(base: Image.Image, center: tuple, radius: int, width: int, color: tuple) -> None:
-    """Тонкая антиалиасная линия ровно по границе аватара."""
     ss = AVATAR_SUPERSAMPLE
     box_size = radius * 2 + width * 2
 
@@ -152,18 +151,17 @@ def _draw_avatar_ring(base: Image.Image, center: tuple, radius: int, width: int,
 
 
 def _draw_debug_grid(image: Image.Image) -> None:
-    """Рисует сетку для калибровки координат."""
     draw = ImageDraw.Draw(image)
     w, h = image.size
     
-    # Горизонтальные линии каждые 50px с подписями
+    # Горизонтальные линии
     for y in range(0, h, 50):
         color = (255, 0, 0) if y % 100 == 0 else (0, 255, 255)
         draw.line([(0, y), (w, y)], fill=color, width=1)
         if y % 100 == 0:
             draw.text((5, y + 2), f"y={y}", fill=(255, 255, 0), font=ImageFont.load_default())
     
-    # Вертикальные линии каждые 50px с подписями
+    # Вертикальные линии
     for x in range(0, w, 50):
         color = (255, 0, 0) if x % 100 == 0 else (0, 255, 0)
         draw.line([(x, 0), (x, h)], fill=color, width=1)
@@ -172,7 +170,6 @@ def _draw_debug_grid(image: Image.Image) -> None:
 
 
 async def get_active_role_names(cursor, member: discord.Member) -> list:
-    """Роли пользователя, которые не архивированы."""
     result = await cursor.execute(
         'SELECT role_name, archived FROM roles WHERE id_owner_now = $1',
         member.id
@@ -182,7 +179,6 @@ async def get_active_role_names(cursor, member: discord.Member) -> list:
 
 
 async def _get_displayed_role(cursor, member: discord.Member, guild: discord.Guild):
-    """Роль, выбранная через /me -> «Меню»."""
     active_role_names = await get_active_role_names(cursor, member)
 
     result = await cursor.execute('SELECT displayed_role FROM user_profiles WHERE user_id = $1', member.id)
@@ -200,7 +196,6 @@ async def _get_displayed_role(cursor, member: discord.Member, guild: discord.Gui
 
 
 async def get_member_room_options(cursor, member: discord.Member) -> list:
-    """Все комнаты, роль которых сейчас есть у пользователя."""
     result = await cursor.execute('SELECT room_name, role_id, creation_date FROM room_leadership')
     rows = cursor.fetchall()
 
@@ -209,7 +204,6 @@ async def get_member_room_options(cursor, member: discord.Member) -> list:
 
 
 async def _get_room_name(cursor, member: discord.Member):
-    """Комната, отображаемая в профиле."""
     rooms = await get_member_room_options(cursor, member)
     if not rooms:
         return None
@@ -236,7 +230,6 @@ async def _get_room_name(cursor, member: discord.Member):
 
 
 async def _get_marriage_display(cursor, member: discord.Member, guild: discord.Guild):
-    """Возвращает (couple_line, days_line)."""
     result = await cursor.execute(
         'SELECT user1_id, user2_id, created_at FROM marriages WHERE user1_id = $1 OR user2_id = $1',
         member.id
@@ -270,7 +263,7 @@ async def _get_marriage_display(cursor, member: discord.Member, guild: discord.G
 
 
 async def create_profile_image(cursor, member: discord.Member, guild: discord.Guild) -> io.BytesIO:
-    # --- статистика из user_profiles ---
+    # Статистика
     result = await cursor.execute(
         'SELECT balance, voice_hours, messages_count FROM user_profiles WHERE user_id = $1',
         member.id
@@ -284,7 +277,7 @@ async def create_profile_image(cursor, member: discord.Member, guild: discord.Gu
         voice_hours = round(float(voice_hours or 0), 2)
         messages_count = messages_count or 0
 
-    # --- место в топе по часам в войсе ---
+    # Ранг
     rank_result = await cursor.execute(
         'SELECT COUNT(*) + 1 FROM user_profiles WHERE voice_hours > (SELECT voice_hours FROM user_profiles WHERE user_id = $1)',
         member.id
@@ -292,20 +285,19 @@ async def create_profile_image(cursor, member: discord.Member, guild: discord.Gu
     rank_row = rank_result and cursor.fetchone()
     rank = rank_row[0] if rank_row else 1
 
-    # --- личная роль, личная комната, брак ---
+    # Роль, комната, брак
     displayed_role = await _get_displayed_role(cursor, member, guild)
     room_name = await _get_room_name(cursor, member)
     couple_line, days_line = await _get_marriage_display(cursor, member, guild)
 
-    # --- дата вступления ---
+    # Дата вступления
     joined_str = "—"
     if member.joined_at:
         joined_str = member.joined_at.strftime("%d.%m.%Y")
 
-    # --- сборка картинки ---
+    # Сборка картинки
     base = Image.open(TEMPLATE_PATH).convert("RGBA")
     
-    # Если шаблон не 1200x640, ресайзим его
     if base.size != (1200, 640):
         base = base.resize((1200, 640), Image.LANCZOS)
 
@@ -314,29 +306,26 @@ async def create_profile_image(cursor, member: discord.Member, guild: discord.Gu
 
     draw = ImageDraw.Draw(base)
 
-    # Загружаем шрифты
+    # Шрифты
     font_username = _load_font(FONT_BOLD_PATH, USERNAME_FONT_SIZE)
     font_joined = _load_font(FONT_BOLD_PATH, JOINED_FONT_SIZE)
     font_left_value = _load_font(FONT_BOLD_PATH, LEFT_VALUE_FONT_SIZE)
     font_right_value = _load_font(FONT_BOLD_PATH, RIGHT_VALUE_FONT_SIZE)
 
-    # аватар
+    # Аватар
     avatar = await _fetch_circular_avatar(member, AVATAR_SIZE)
     avatar_pos = (AVATAR_CENTER[0] - AVATAR_RADIUS, AVATAR_CENTER[1] - AVATAR_RADIUS)
     base.alpha_composite(avatar, avatar_pos)
     _draw_avatar_ring(base, AVATAR_CENTER, AVATAR_RADIUS, AVATAR_RING_WIDTH, AVATAR_RING_COLOR)
 
-    # ник
+    # Ник
     _draw_centered_text(draw, USERNAME_CENTER_X, USERNAME_Y, member.display_name, font_username, USERNAME_MAX_WIDTH)
 
-    # дата на сервере
+    # Дата на сервере
     _draw_centered_text(draw, JOINED_CENTER_X, JOINED_Y, f"На сервере с {joined_str}г", font_joined, JOINED_MAX_WIDTH)
 
-    # левая колонка
-    _draw_left_aligned_text(draw, LEFT_X, LEFT_VALUES_Y["role"], displayed_role.name if displayed_role else "Отсутствует", font_left_value, LEFT_MAX_WIDTH)
-    _draw_left_aligned_text(draw, LEFT_X, LEFT_VALUES_Y["room"], room_name if room_name else "Отсутствует", font_left_value, LEFT_MAX_WIDTH)
-
-    # блок брака (центрируется)
+    # ===== ЛЕВАЯ КОЛОНКА =====
+    # Брачный профиль (центрируется)
     if couple_line:
         _draw_centered_text(draw, MARRIAGE_CENTER_X, LEFT_VALUES_Y["marriage"], couple_line, font_left_value, LEFT_MAX_WIDTH)
         if days_line:
@@ -344,10 +333,23 @@ async def create_profile_image(cursor, member: discord.Member, guild: discord.Gu
     else:
         _draw_centered_text(draw, MARRIAGE_CENTER_X, LEFT_VALUES_Y["marriage"], "Отсутствует", font_left_value, LEFT_MAX_WIDTH)
 
-    # правая колонка
+    # Личная роль (по левому краю)
+    _draw_left_aligned_text(draw, LEFT_X, LEFT_VALUES_Y["role"], displayed_role.name if displayed_role else "Отсутствует", font_left_value, LEFT_MAX_WIDTH)
+
+    # Личная комната (по левому краю)
+    _draw_left_aligned_text(draw, LEFT_X, LEFT_VALUES_Y["room"], room_name if room_name else "Отсутствует", font_left_value, LEFT_MAX_WIDTH)
+
+    # ===== ПРАВАЯ КОЛОНКА =====
+    # Баланс
     _draw_right_aligned_text(draw, RIGHT_BLOCK_RIGHT_EDGE, RIGHT_VALUES_Y["balance"], f"{balance}", font_right_value, RIGHT_MAX_WIDTH)
+    
+    # В войсе
     _draw_right_aligned_text(draw, RIGHT_BLOCK_RIGHT_EDGE, RIGHT_VALUES_Y["voice"], f"{int(voice_hours)}ч", font_right_value, RIGHT_MAX_WIDTH)
+    
+    # Сообщения
     _draw_right_aligned_text(draw, RIGHT_BLOCK_RIGHT_EDGE, RIGHT_VALUES_Y["messages"], f"{messages_count}", font_right_value, RIGHT_MAX_WIDTH)
+    
+    # Место в топе
     _draw_right_aligned_text(draw, RIGHT_BLOCK_RIGHT_EDGE, RIGHT_VALUES_Y["rank"], f"#{rank}", font_right_value, RIGHT_MAX_WIDTH)
 
     buffer = io.BytesIO()
