@@ -95,6 +95,7 @@ async def init_db_pool():
                     god_kissed TEXT DEFAULT '—',
                     voice_hours NUMERIC(10,2) DEFAULT 0,
                     displayed_role TEXT,
+                    displayed_room TEXT,
                     messages_count INTEGER DEFAULT 0
                 )
             ''')
