@@ -19,7 +19,7 @@ import os
 import io
 from PIL import Image, ImageDraw, ImageFont
 from cache import get_cached, set_cached, delete_cached, balance_cache_key, profile_cache_key, top_cache_key
-from commands_profile import create_profile_image
+from commands_profile import create_profile_image, get_active_role_names, get_member_room_options
 
 # ============================================
 # ГЛОБАЛЬНЫЙ CURSOR (передается из main.py)
@@ -573,6 +573,68 @@ async def top_hours(interaction: discord.Interaction):
 # PROFILE COMMAND - /me
 # ============================================
 
+class RoleDisplaySelect(discord.ui.Select):
+    """Селект для выбора роли, которая будет отображаться в визуальном профиле (/me)."""
+
+    def __init__(self, role_options: list):
+        options = [discord.SelectOption(label=name[:100], value=name) for name in role_options[:25]]
+        super().__init__(placeholder="Роль для отображения в профиле", options=options, min_values=1, max_values=1)
+
+    async def callback(self, interaction: discord.Interaction):
+        global cursor
+        chosen_role_name = self.values[0]
+
+        await cursor.execute(
+            'UPDATE user_profiles SET displayed_role = $1 WHERE user_id = $2',
+            chosen_role_name, interaction.user.id
+        )
+
+        await interaction.response.send_message(
+            embed=discord.Embed(
+                description=f"Роль **{chosen_role_name}** теперь отображается в вашем профиле (`/me`).",
+                color=discord.Color.from_str('#6e6e6e')
+            ),
+            ephemeral=True
+        )
+
+
+class RoomDisplaySelect(discord.ui.Select):
+    """Селект для выбора комнаты, которая будет отображаться в визуальном профиле (/me)."""
+
+    def __init__(self, room_options: list):
+        options = [discord.SelectOption(label=name[:100], value=name) for name in room_options[:25]]
+        super().__init__(placeholder="Комната для отображения в профиле", options=options, min_values=1, max_values=1)
+
+    async def callback(self, interaction: discord.Interaction):
+        global cursor
+        chosen_room_name = self.values[0]
+
+        await cursor.execute(
+            'UPDATE user_profiles SET displayed_room = $1 WHERE user_id = $2',
+            chosen_room_name, interaction.user.id
+        )
+
+        await interaction.response.send_message(
+            embed=discord.Embed(
+                description=f"Комната **{chosen_room_name}** теперь отображается в вашем профиле (`/me`).",
+                color=discord.Color.from_str('#6e6e6e')
+            ),
+            ephemeral=True
+        )
+
+
+class ProfileMenuView(discord.ui.View):
+    """Меню /me -> «Меню»: селект роли добавляется только если есть из чего выбирать
+    (2+ активные роли), аналогично для комнаты (2+ комнаты по роли участника)."""
+
+    def __init__(self, role_options: list, room_options: list):
+        super().__init__(timeout=60)
+        if len(role_options) >= 2:
+            self.add_item(RoleDisplaySelect(role_options))
+        if len(room_options) >= 2:
+            self.add_item(RoomDisplaySelect(room_options))
+
+
 @app_commands.command(name="me", description="Показать профиль пользователя")
 @app_commands.describe(пользователь="Участник, чей профиль вы хотите просмотреть")
 async def me(interaction: discord.Interaction, пользователь: discord.Member = None):
@@ -938,6 +1000,48 @@ async def me(interaction: discord.Interaction, пользователь: discord
 
     button_marriage.callback = marriage_callback
     view.add_item(button_marriage)
+
+    # Кнопка «Меню»: выбор отображаемой в профиле роли и/или комнаты.
+    # Недоступна для чужого профиля, а также если выбирать не из чего —
+    # то есть у пользователя не больше одной роли и не больше одной комнаты (см. ТЗ п.2).
+    active_role_names = await get_active_role_names(cursor, пользователь)
+    room_options = await get_member_room_options(cursor, пользователь)
+    room_names = [name for name, _ in room_options]
+
+    can_choose_role = len(active_role_names) >= 2
+    can_choose_room = len(room_names) >= 2
+
+    button_menu = ui.Button(
+        label="Меню",
+        style=discord.ButtonStyle.gray,
+        emoji="<:mice:1526013753110433872>",
+        disabled=(пользователь != interaction.user) or not (can_choose_role or can_choose_room)
+    )
+
+    async def menu_callback(i: discord.Interaction):
+        if i.user != пользователь:
+            await i.response.send_message(
+                embed=discord.Embed(
+                    description="Меню отображения профиля доступно только его владельцу.",
+                    color=0x6e6e6e
+                ),
+                ephemeral=True
+            )
+            return
+
+        current_role_names = await get_active_role_names(cursor, пользователь)
+        current_room_options = await get_member_room_options(cursor, пользователь)
+        current_room_names = [name for name, _ in current_room_options]
+
+        menu_view = ProfileMenuView(current_role_names, current_room_names)
+        await i.response.send_message(
+            "Выберите, что отображать в профиле (`/me`):",
+            view=menu_view,
+            ephemeral=True
+        )
+
+    button_menu.callback = menu_callback
+    view.add_item(button_menu)
 
     await interaction.followup.send(file=profile_file, view=view)
 
@@ -2170,65 +2274,8 @@ class ExtendRoleModal(Modal):
 
         await interaction.followup.edit_message(message_id=interaction.message.id, embed=updated_embed, view=updated_view)
 
-class DisplayRoleSelect(discord.ui.Select):
-    """Селект для выбора роли, которая будет отображаться на визуальном профиле (/me)."""
-
-    def __init__(self, parent_view: "DisplayRoleView", role_options: list):
-        options = [
-            discord.SelectOption(label=name[:100], value=name)
-            for name in role_options
-        ]
-        super().__init__(placeholder="Выберите роль для отображения в профиле", options=options, min_values=1, max_values=1)
-        self.parent_view = parent_view
-
-    async def callback(self, interaction: discord.Interaction):
-        global cursor
-        chosen_role_name = self.values[0]
-
-        await cursor.execute(
-            'UPDATE user_profiles SET displayed_role = $1 WHERE user_id = $2',
-            chosen_role_name, interaction.user.id
-        )
-
-        embed = discord.Embed(
-            description=f"Роль **{chosen_role_name}** теперь будет отображаться в вашем профиле (`/me`).",
-            color=discord.Color.from_str('#6e6e6e')
-        )
-        await interaction.response.edit_message(embed=embed, view=None)
-
-
-class DisplayRoleView(discord.ui.View):
-    def __init__(self, role_options: list):
-        super().__init__(timeout=60)
-        self.add_item(DisplayRoleSelect(self, role_options))
-
-
-class InventoryDisplayButton(discord.ui.Button):
-    """Кнопка «Отобразить», открывающая селект выбора роли для профиля (аналогично /room manage)."""
-
-    def __init__(self, owner_id: int, role_options: list):
-        super().__init__(label="Отобразить", style=discord.ButtonStyle.gray, emoji="<:mice:1526013753110433872>")
-        self.owner_id = owner_id
-        self.role_options = role_options
-
-    async def callback(self, interaction: discord.Interaction):
-        if interaction.user.id != self.owner_id:
-            await interaction.response.send_message("Выбрать отображаемую роль может только владелец инвентаря.", ephemeral=True)
-            return
-
-        view = DisplayRoleView(self.role_options)
-        await interaction.response.send_message(
-            "Выберите роль, которая будет отображаться в вашем профиле:",
-            view=view,
-            ephemeral=True
-        )
-
-
-class InventoryView(discord.ui.View):
-    def __init__(self, owner_id: int, role_options: list):
-        super().__init__(timeout=60)
-        if role_options:
-            self.add_item(InventoryDisplayButton(owner_id, role_options))
+# Кнопка «Отобразить» перенесена из /role inventory в /me -> «Меню»
+# (см. ProfileMenuView / RoleDisplaySelect / RoomDisplaySelect ниже, рядом с /me).
 
 
 @role_group.command(name="inventory", description="Показать активные роли и дату их истечения")
@@ -2294,9 +2341,8 @@ async def inventory(interaction: discord.Interaction, пользователь: 
 
     embed.description = role_list if role_list else "Нет активных ролей."
 
-    # Кнопка «Отобразить» доступна только владельцу и только если есть роль, которую можно выбрать
-    view = InventoryView(пользователь.id, active_role_names) if is_self else None
-    await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+    # Выбор отображаемой в профиле роли теперь делается через /me -> «Меню»
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
 @role_group.command(name="info", description="Получить информацию о роли")
 @app_commands.describe(роль="Упомяните роль для проверки информации")
