@@ -11,6 +11,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 TEMPLATE_PATH = "PlaceholderProfile1.png"
 FONT_BOLD_PATH = "ProximaNova-Bold.ttf"
+FONT_REGULAR_PATH = "ProximaNova-Regular.ttf"  # для "На сервере с ..." — нужен файл в корне проекта
 
 # --------------------------------------------------------------------------
 # КООРДИНАТЫ ДЛЯ РАЗМЕРА 1200x640 (откалибровано по скриншоту)
@@ -27,40 +28,51 @@ AVATAR_RING_WIDTH = 2
 AVATAR_RING_COLOR = (255, 255, 255, 200)
 AVATAR_SUPERSAMPLE = 4
 
-# Ник под аватаром (центральная панель: y 84-389, круг заканчивается на y=250,
-# так что вся зона под аватаром для ника/даты — y 250-389)
+# Ник под аватаром. Панель аватара в шаблоне: x 458-741 (ширина 283), y 84-389.
+# MAX_WIDTH должен помещаться в реальную ширину панели, а не быть больше её —
+# именно поэтому длинный ник раньше вылезал за края.
 USERNAME_CENTER_X = 600
 USERNAME_CENTER_Y = 285
-USERNAME_MAX_WIDTH = 350
+USERNAME_MAX_WIDTH = 240
 USERNAME_FONT_SIZE = 32
 
-# "На сервере с ..."
+# "На сервере с ..." — тонким начертанием (Regular), ниже ника
 JOINED_CENTER_X = 600
-JOINED_CENTER_Y = 335
-JOINED_MAX_WIDTH = 350
+JOINED_CENTER_Y = 369
+JOINED_MAX_WIDTH = 250
 JOINED_FONT_SIZE = 16
 
 # ЛЕВАЯ КОЛОНКА (Брачный профиль / Личная роль / Личная комната)
-# Текст выравнивается по левому краю, под первой буквой заголовка (x=155 в шаблоне)
-LEFT_X = 160
-LEFT_MAX_WIDTH = 235
 LEFT_VALUE_FONT_SIZE = 22
 
 # Границы боксов левой колонки в шаблоне (для справки):
 #   Брачный профиль: y  84-220 (заголовок ~102-119)
-#   Личная роль:      y 238-374 (заголовок ~256-273, иконка ~288-334)
+#   Личная роль:      y 238-374 (заголовок ~256-273, иконка ~288-334, справа от иконки x 197-413)
 #   Личная комната:    y 392-528 (заголовок ~419-432)
-# Значения левой колонки — центр строки по Y (anchor="lm")
-LEFT_VALUES_CENTER_Y = {
-    "marriage": 155,     # "enotlque ♥ ..." или "Отсутствует" — под заголовком бокса 1
-    "room": 515,         # "testtesttest..." — на месте плейсхолдера "Выставляется в профиле"
-}
-# "Личная роль" — значение ставим на место плейсхолдера под иконкой,
-# а не поверх неё (иконка занимает y 288-334)
-ROLE_VALUE_CENTER_Y = 361
+# Общий центр по X для всей левой колонки (box: x 130-413)
+LEFT_COLUMN_CENTER_X = 271
 
-# Блок брака — дополнительная строка "вместе N дней"
-MARRIAGE_DAYS_CENTER_Y = 185  # вторая строка под "marriage", тот же бокс (до y=220)
+# Брачный профиль — основная строка остаётся по левому краю (под заголовком)
+LEFT_X = 160
+LEFT_MAX_WIDTH = 235
+MARRIAGE_CENTER_Y = 155
+
+# "вместе N дней" — отдельная, более мелкая (14пт) строка по центру бокса
+MARRIAGE_DAYS_CENTER_X = LEFT_COLUMN_CENTER_X
+MARRIAGE_DAYS_CENTER_Y = 194
+MARRIAGE_DAYS_MAX_WIDTH = 110
+MARRIAGE_DAYS_FONT_SIZE = 14
+
+# Личная роль — значение теперь СПРАВА от иконки (та же строка), по центру
+# свободного места (иконка занимает x до ~197, бокс справа заканчивается на 413)
+ROLE_VALUE_CENTER_X = 305
+ROLE_VALUE_CENTER_Y = 311
+ROLE_VALUE_MAX_WIDTH = 170
+
+# Личная комната — значение между заголовком и нижним краем бокса, по центру
+ROOM_VALUE_CENTER_X = LEFT_COLUMN_CENTER_X
+ROOM_VALUE_CENTER_Y = 466
+ROOM_VALUE_MAX_WIDTH = 250
 
 # ПРАВАЯ КОЛОНКА (Баланс / В войсе / Сообщения / Место в топе)
 RIGHT_BLOCK_RIGHT_EDGE = 1040
@@ -72,19 +84,24 @@ RIGHT_VALUES_CENTER_Y = {
     "balance": 126,      # "Баланс"
     "voice": 192,        # "В войсе"
     "messages": 259,     # "Сообщения"
-    "rank": 322,         # "Место в топе"
+    "rank": 330,         # "Место в топе" — чуть ниже центра иконки (было 322)
 }
 
 # Цвет текста
 TEXT_COLOR = (255, 255, 255)
 
+# Отключаем "raqm"-шейпинг (продвинутый кернинг/лигатуры), из-за которого
+# некоторые пары букв (например "tl") могли слипаться на кастомном шрифте.
+_BASIC_LAYOUT = getattr(ImageFont, "Layout", None)
+_BASIC_LAYOUT = _BASIC_LAYOUT.BASIC if _BASIC_LAYOUT else getattr(ImageFont, "LAYOUT_BASIC", 0)
+
 
 def _load_font(path: str, size: int) -> ImageFont.FreeTypeFont:
     if not os.path.exists(path):
         raise FileNotFoundError(
-            f"Шрифт '{path}' не найден. Положи файл ProximaNova-Bold.ttf в корень проекта."
+            f"Шрифт '{path}' не найден. Положи файл '{path}' в корень проекта."
         )
-    return ImageFont.truetype(path, size)
+    return ImageFont.truetype(path, size, layout_engine=_BASIC_LAYOUT)
 
 
 def _truncate_to_width(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.FreeTypeFont, max_width: int) -> str:
@@ -314,8 +331,9 @@ async def create_profile_image(cursor, member: discord.Member, guild: discord.Gu
 
     # Шрифты
     font_username = _load_font(FONT_BOLD_PATH, USERNAME_FONT_SIZE)
-    font_joined = _load_font(FONT_BOLD_PATH, JOINED_FONT_SIZE)
+    font_joined = _load_font(FONT_REGULAR_PATH, JOINED_FONT_SIZE)
     font_left_value = _load_font(FONT_BOLD_PATH, LEFT_VALUE_FONT_SIZE)
+    font_marriage_days = _load_font(FONT_BOLD_PATH, MARRIAGE_DAYS_FONT_SIZE)
     font_right_value = _load_font(FONT_BOLD_PATH, RIGHT_VALUE_FONT_SIZE)
 
     # Аватар
@@ -331,19 +349,19 @@ async def create_profile_image(cursor, member: discord.Member, guild: discord.Gu
     _draw_centered_text(draw, JOINED_CENTER_X, JOINED_CENTER_Y, f"На сервере с {joined_str}г", font_joined, JOINED_MAX_WIDTH)
 
     # ===== ЛЕВАЯ КОЛОНКА =====
-    # Брачный профиль (по левому краю, под заголовком бокса)
+    # Брачный профиль — основная строка по левому краю, "вместе N дней" — мельче и по центру бокса
     if couple_line:
-        _draw_left_aligned_text(draw, LEFT_X, LEFT_VALUES_CENTER_Y["marriage"], couple_line, font_left_value, LEFT_MAX_WIDTH)
+        _draw_left_aligned_text(draw, LEFT_X, MARRIAGE_CENTER_Y, couple_line, font_left_value, LEFT_MAX_WIDTH)
         if days_line:
-            _draw_left_aligned_text(draw, LEFT_X, MARRIAGE_DAYS_CENTER_Y, days_line, font_left_value, LEFT_MAX_WIDTH)
+            _draw_centered_text(draw, MARRIAGE_DAYS_CENTER_X, MARRIAGE_DAYS_CENTER_Y, days_line, font_marriage_days, MARRIAGE_DAYS_MAX_WIDTH)
     else:
-        _draw_left_aligned_text(draw, LEFT_X, LEFT_VALUES_CENTER_Y["marriage"], "Отсутствует", font_left_value, LEFT_MAX_WIDTH)
+        _draw_left_aligned_text(draw, LEFT_X, MARRIAGE_CENTER_Y, "Отсутствует", font_left_value, LEFT_MAX_WIDTH)
 
-    # Личная роль (по левому краю, на месте плейсхолдера под иконкой — не поверх неё)
-    _draw_left_aligned_text(draw, LEFT_X, ROLE_VALUE_CENTER_Y, displayed_role.name if displayed_role else "Отсутствует", font_left_value, LEFT_MAX_WIDTH)
+    # Личная роль — справа от иконки, по центру
+    _draw_centered_text(draw, ROLE_VALUE_CENTER_X, ROLE_VALUE_CENTER_Y, displayed_role.name if displayed_role else "Отсутствует", font_left_value, ROLE_VALUE_MAX_WIDTH)
 
-    # Личная комната (по левому краю)
-    _draw_left_aligned_text(draw, LEFT_X, LEFT_VALUES_CENTER_Y["room"], room_name if room_name else "Отсутствует", font_left_value, LEFT_MAX_WIDTH)
+    # Личная комната — по центру бокса, между заголовком и низом
+    _draw_centered_text(draw, ROOM_VALUE_CENTER_X, ROOM_VALUE_CENTER_Y, room_name if room_name else "Отсутствует", font_left_value, ROOM_VALUE_MAX_WIDTH)
 
     # ===== ПРАВАЯ КОЛОНКА =====
     # Баланс
