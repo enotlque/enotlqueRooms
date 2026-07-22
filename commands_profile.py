@@ -16,55 +16,63 @@ FONT_BOLD_PATH = "ProximaNova-Bold.ttf"
 # КООРДИНАТЫ ДЛЯ РАЗМЕРА 1200x640 (откалибровано по скриншоту)
 # --------------------------------------------------------------------------
 
-DEBUG_GRID = True  # Пока оставлю для финальной калибровки
+DEBUG_GRID = False  # True -> поверх картинки рисуется сетка 50px для калибровки координат
 
 # Аватар
-AVATAR_CENTER = (600, 160)  # чуть выше
-AVATAR_RADIUS = 70
+# Замерено напрямую по PlaceholderProfile1.png: круг занимает x 528-671, y 107-250
+AVATAR_CENTER = (600, 178)
+AVATAR_RADIUS = 71
 AVATAR_SIZE = AVATAR_RADIUS * 2
 AVATAR_RING_WIDTH = 2
 AVATAR_RING_COLOR = (255, 255, 255, 200)
 AVATAR_SUPERSAMPLE = 4
 
-# Ник под аватаром
+# Ник под аватаром (центральная панель: y 84-389, круг заканчивается на y=250,
+# так что вся зона под аватаром для ника/даты — y 250-389)
 USERNAME_CENTER_X = 600
-USERNAME_Y = 275
+USERNAME_CENTER_Y = 285
 USERNAME_MAX_WIDTH = 350
 USERNAME_FONT_SIZE = 32
 
-# "На сервере с ..." 
+# "На сервере с ..."
 JOINED_CENTER_X = 600
-JOINED_Y = 500
+JOINED_CENTER_Y = 335
 JOINED_MAX_WIDTH = 350
 JOINED_FONT_SIZE = 16
 
 # ЛЕВАЯ КОЛОНКА (Брачный профиль / Личная роль / Личная комната)
-LEFT_X = 140
-LEFT_MAX_WIDTH = 250
+# Текст выравнивается по левому краю, под первой буквой заголовка (x=155 в шаблоне)
+LEFT_X = 160
+LEFT_MAX_WIDTH = 235
 LEFT_VALUE_FONT_SIZE = 22
 
-# Значения левой колонки (то что должно отображаться)
-LEFT_VALUES_Y = {
-    "marriage": 185,    # "enotlque ♥ ..." или "Отсутствует"
-    "role": 310,        # "gotwelvevmbgfldsfcvsq"
-    "room": 435,        # "testtesttesttesttesttest..."
+# Границы боксов левой колонки в шаблоне (для справки):
+#   Брачный профиль: y  84-220 (заголовок ~102-119)
+#   Личная роль:      y 238-374 (заголовок ~256-273, иконка ~288-334)
+#   Личная комната:    y 392-528 (заголовок ~419-432)
+# Значения левой колонки — центр строки по Y (anchor="lm")
+LEFT_VALUES_CENTER_Y = {
+    "marriage": 155,     # "enotlque ♥ ..." или "Отсутствует" — под заголовком бокса 1
+    "room": 515,         # "testtesttest..." — на месте плейсхолдера "Выставляется в профиле"
 }
+# "Личная роль" — значение ставим на место плейсхолдера под иконкой,
+# а не поверх неё (иконка занимает y 288-334)
+ROLE_VALUE_CENTER_Y = 361
 
 # Блок брака — дополнительная строка "вместе N дней"
-MARRIAGE_CENTER_X = LEFT_X + LEFT_MAX_WIDTH // 2
-MARRIAGE_DAYS_Y_OFFSET = 30  # смещение под "вместе 2 дней"
+MARRIAGE_DAYS_CENTER_Y = 185  # вторая строка под "marriage", тот же бокс (до y=220)
 
 # ПРАВАЯ КОЛОНКА (Баланс / В войсе / Сообщения / Место в топе)
-RIGHT_BLOCK_RIGHT_EDGE = 1060
-RIGHT_MAX_WIDTH = 200
+RIGHT_BLOCK_RIGHT_EDGE = 1040
+RIGHT_MAX_WIDTH = 170
 RIGHT_VALUE_FONT_SIZE = 22
 
-# Значения правой колонки
-RIGHT_VALUES_Y = {
-    "balance": 185,     # "1520" (пример)
-    "voice": 310,       # "144" (часы)
-    "messages": 435,    # "15" (сообщения)
-    "rank": 560,        # "#1"
+# Значения правой колонки — центр строки по Y, замерено по центрам иконок/лейблов в шаблоне
+RIGHT_VALUES_CENTER_Y = {
+    "balance": 126,      # "Баланс"
+    "voice": 192,        # "В войсе"
+    "messages": 259,     # "Сообщения"
+    "rank": 322,         # "Место в топе"
 }
 
 # Цвет текста
@@ -91,26 +99,24 @@ def _truncate_to_width(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.Fre
     return (truncated.rstrip() + ellipsis) if truncated else ellipsis
 
 
-def _measure(draw, text: str, font) -> tuple:
-    bbox = draw.textbbox((0, 0), text, font=font)
-    return bbox[2] - bbox[0], bbox[0]
+# Все три функции ниже принимают Y как ВЕРТИКАЛЬНЫЙ ЦЕНТР строки текста
+# (anchor="?m" — middle по вертикали), а не координату верхнего края.
+# Это устраняет "плавающее" позиционирование, которое давало разный результат
+# для разных шрифтов/размеров при ручном расчёте через textbbox.
 
-
-def _draw_centered_text(draw, center_x: int, y: int, text: str, font, max_width: int, fill=TEXT_COLOR) -> None:
+def _draw_centered_text(draw, center_x: int, center_y: int, text: str, font, max_width: int, fill=TEXT_COLOR) -> None:
     text = _truncate_to_width(draw, text, font, max_width)
-    width, left_bearing = _measure(draw, text, font)
-    draw.text((center_x - width / 2 - left_bearing, y), text, font=font, fill=fill)
+    draw.text((center_x, center_y), text, font=font, fill=fill, anchor="mm")
 
 
-def _draw_left_aligned_text(draw, x: int, y: int, text: str, font, max_width: int, fill=TEXT_COLOR) -> None:
+def _draw_left_aligned_text(draw, x: int, center_y: int, text: str, font, max_width: int, fill=TEXT_COLOR) -> None:
     text = _truncate_to_width(draw, text, font, max_width)
-    draw.text((x, y), text, font=font, fill=fill)
+    draw.text((x, center_y), text, font=font, fill=fill, anchor="lm")
 
 
-def _draw_right_aligned_text(draw, right_x: int, y: int, text: str, font, max_width: int, fill=TEXT_COLOR) -> None:
+def _draw_right_aligned_text(draw, right_x: int, center_y: int, text: str, font, max_width: int, fill=TEXT_COLOR) -> None:
     text = _truncate_to_width(draw, text, font, max_width)
-    width, left_bearing = _measure(draw, text, font)
-    draw.text((right_x - width - left_bearing, y), text, font=font, fill=fill)
+    draw.text((right_x, center_y), text, font=font, fill=fill, anchor="rm")
 
 
 async def _fetch_circular_avatar(member: discord.abc.User, diameter: int) -> Image.Image:
@@ -319,38 +325,38 @@ async def create_profile_image(cursor, member: discord.Member, guild: discord.Gu
     _draw_avatar_ring(base, AVATAR_CENTER, AVATAR_RADIUS, AVATAR_RING_WIDTH, AVATAR_RING_COLOR)
 
     # Ник
-    _draw_centered_text(draw, USERNAME_CENTER_X, USERNAME_Y, member.display_name, font_username, USERNAME_MAX_WIDTH)
+    _draw_centered_text(draw, USERNAME_CENTER_X, USERNAME_CENTER_Y, member.display_name, font_username, USERNAME_MAX_WIDTH)
 
     # Дата на сервере
-    _draw_centered_text(draw, JOINED_CENTER_X, JOINED_Y, f"На сервере с {joined_str}г", font_joined, JOINED_MAX_WIDTH)
+    _draw_centered_text(draw, JOINED_CENTER_X, JOINED_CENTER_Y, f"На сервере с {joined_str}г", font_joined, JOINED_MAX_WIDTH)
 
     # ===== ЛЕВАЯ КОЛОНКА =====
-    # Брачный профиль (центрируется)
+    # Брачный профиль (по левому краю, под заголовком бокса)
     if couple_line:
-        _draw_centered_text(draw, MARRIAGE_CENTER_X, LEFT_VALUES_Y["marriage"], couple_line, font_left_value, LEFT_MAX_WIDTH)
+        _draw_left_aligned_text(draw, LEFT_X, LEFT_VALUES_CENTER_Y["marriage"], couple_line, font_left_value, LEFT_MAX_WIDTH)
         if days_line:
-            _draw_centered_text(draw, MARRIAGE_CENTER_X, LEFT_VALUES_Y["marriage"] + MARRIAGE_DAYS_Y_OFFSET, days_line, font_left_value, LEFT_MAX_WIDTH)
+            _draw_left_aligned_text(draw, LEFT_X, MARRIAGE_DAYS_CENTER_Y, days_line, font_left_value, LEFT_MAX_WIDTH)
     else:
-        _draw_centered_text(draw, MARRIAGE_CENTER_X, LEFT_VALUES_Y["marriage"], "Отсутствует", font_left_value, LEFT_MAX_WIDTH)
+        _draw_left_aligned_text(draw, LEFT_X, LEFT_VALUES_CENTER_Y["marriage"], "Отсутствует", font_left_value, LEFT_MAX_WIDTH)
 
-    # Личная роль (по левому краю)
-    _draw_left_aligned_text(draw, LEFT_X, LEFT_VALUES_Y["role"], displayed_role.name if displayed_role else "Отсутствует", font_left_value, LEFT_MAX_WIDTH)
+    # Личная роль (по левому краю, на месте плейсхолдера под иконкой — не поверх неё)
+    _draw_left_aligned_text(draw, LEFT_X, ROLE_VALUE_CENTER_Y, displayed_role.name if displayed_role else "Отсутствует", font_left_value, LEFT_MAX_WIDTH)
 
     # Личная комната (по левому краю)
-    _draw_left_aligned_text(draw, LEFT_X, LEFT_VALUES_Y["room"], room_name if room_name else "Отсутствует", font_left_value, LEFT_MAX_WIDTH)
+    _draw_left_aligned_text(draw, LEFT_X, LEFT_VALUES_CENTER_Y["room"], room_name if room_name else "Отсутствует", font_left_value, LEFT_MAX_WIDTH)
 
     # ===== ПРАВАЯ КОЛОНКА =====
     # Баланс
-    _draw_right_aligned_text(draw, RIGHT_BLOCK_RIGHT_EDGE, RIGHT_VALUES_Y["balance"], f"{balance}", font_right_value, RIGHT_MAX_WIDTH)
-    
+    _draw_right_aligned_text(draw, RIGHT_BLOCK_RIGHT_EDGE, RIGHT_VALUES_CENTER_Y["balance"], f"{balance}", font_right_value, RIGHT_MAX_WIDTH)
+
     # В войсе
-    _draw_right_aligned_text(draw, RIGHT_BLOCK_RIGHT_EDGE, RIGHT_VALUES_Y["voice"], f"{int(voice_hours)}ч", font_right_value, RIGHT_MAX_WIDTH)
-    
+    _draw_right_aligned_text(draw, RIGHT_BLOCK_RIGHT_EDGE, RIGHT_VALUES_CENTER_Y["voice"], f"{int(voice_hours)}ч", font_right_value, RIGHT_MAX_WIDTH)
+
     # Сообщения
-    _draw_right_aligned_text(draw, RIGHT_BLOCK_RIGHT_EDGE, RIGHT_VALUES_Y["messages"], f"{messages_count}", font_right_value, RIGHT_MAX_WIDTH)
-    
+    _draw_right_aligned_text(draw, RIGHT_BLOCK_RIGHT_EDGE, RIGHT_VALUES_CENTER_Y["messages"], f"{messages_count}", font_right_value, RIGHT_MAX_WIDTH)
+
     # Место в топе
-    _draw_right_aligned_text(draw, RIGHT_BLOCK_RIGHT_EDGE, RIGHT_VALUES_Y["rank"], f"#{rank}", font_right_value, RIGHT_MAX_WIDTH)
+    _draw_right_aligned_text(draw, RIGHT_BLOCK_RIGHT_EDGE, RIGHT_VALUES_CENTER_Y["rank"], f"#{rank}", font_right_value, RIGHT_MAX_WIDTH)
 
     buffer = io.BytesIO()
     base.convert("RGB").save(buffer, format="PNG")
