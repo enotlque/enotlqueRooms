@@ -206,6 +206,8 @@ from commands_activity import setup_activity_tracking
 import commands_economy
 commands_economy.set_cursor(cursor)
 
+commands_economy.set_slots_connection_factory(get_db_connection)
+
 from commands_economy import (
     eco_group,
     me,
