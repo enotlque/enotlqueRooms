@@ -9,7 +9,7 @@ from PIL import Image, ImageDraw, ImageFont
 # Генератор картинки профиля
 # ============================================
 
-TEMPLATE_PATH = "PlaceholderProfile1.png"
+TEMPLATE_PATH = "PlaceholderProfile2.png"
 FONT_BOLD_PATH = "ProximaNova-Bold.ttf"
 FONT_REGULAR_PATH = "ProximaNova-Regular.ttf"
 
@@ -150,8 +150,11 @@ async def _fetch_circular_avatar(member: discord.abc.User, diameter: int) -> Ima
 
 def _get_status_color(member: discord.Member) -> tuple:
     """Возвращает цвет статуса пользователя в формате RGB"""
-    status = member.status
-    return STATUS_COLORS.get(status, DEFAULT_RING_COLOR)
+    try:
+        status = member.status
+        return STATUS_COLORS.get(status, DEFAULT_RING_COLOR)
+    except Exception:
+        return DEFAULT_RING_COLOR
 
 
 def _draw_avatar_ring(base: Image.Image, center: tuple, radius: int, width: int, color: tuple) -> None:
@@ -163,9 +166,11 @@ def _draw_avatar_ring(base: Image.Image, center: tuple, radius: int, width: int,
     ring_draw = ImageDraw.Draw(ring_big)
     c = box_size * ss / 2
     r = radius * ss
+    
+    # Рисуем кольцо
     ring_draw.ellipse(
         (c - r, c - r, c - r + 2 * r, c - r + 2 * r),
-        outline=color,
+        outline=(*color, 255),
         width=width * ss,
     )
     ring = ring_big.resize((box_size, box_size), Image.LANCZOS)
@@ -245,7 +250,6 @@ async def _get_room_name(cursor, member: discord.Member):
         if chosen_name and chosen_name in room_names:
             return chosen_name
     except Exception:
-        # Если колонки нет - просто пропускаем
         pass
 
     def _parse_date(value):
@@ -292,8 +296,8 @@ async def _get_marriage_display(cursor, member: discord.Member, guild: discord.G
     name1 = _shorten_name(member.display_name, 12)
     name2 = _shorten_name(partner.display_name, 12)
     
-    # Используем символ ♡ вместо сердечка
-    couple_line = f"{name1} ♡ {name2}"
+    # Используем & вместо сердечка
+    couple_line = f"{name1} & {name2}"
     
     MAX_VISIBLE_LEN = 27
     if len(couple_line) > MAX_VISIBLE_LEN:
@@ -302,7 +306,7 @@ async def _get_marriage_display(cursor, member: discord.Member, guild: discord.G
         cut2 = min(len(name2) - 1, excess // 2)
         name1 = name1[:len(name1) - cut1] + "…" if cut1 > 0 else name1
         name2 = name2[:len(name2) - cut2] + "…" if cut2 > 0 else name2
-        couple_line = f"{name1} ♡ {name2}"
+        couple_line = f"{name1} & {name2}"
 
     days_line = None
     if created_at:
