@@ -24,7 +24,7 @@ DEBUG_GRID = False
 AVATAR_CENTER = (600, 178)
 AVATAR_RADIUS = 71
 AVATAR_SIZE = AVATAR_RADIUS * 2
-AVATAR_RING_WIDTH = 1  # толщина 1px
+AVATAR_RING_WIDTH = 2
 AVATAR_SUPERSAMPLE = 4
 
 # Статусные цвета Discord (оригинальные)
@@ -150,18 +150,24 @@ async def _fetch_circular_avatar(member: discord.abc.User, diameter: int) -> Ima
 
 
 def _get_status_color(member: discord.Member) -> tuple:
+    """Возвращает цвет статуса пользователя в формате RGB"""
     try:
-        # Используем raw_status для гарантии
-        status = member.raw_status
-        if status == "online":
+        # Используем raw_status - он самый надежный
+        raw_status = member.raw_status
+        logging.info(f"Статус {member.display_name}: raw_status='{raw_status}'")
+        
+        if raw_status == "online":
             return (57, 191, 79)
-        elif status == "idle":
+        elif raw_status == "idle":
             return (250, 166, 26)
-        elif status == "dnd":
+        elif raw_status == "dnd":
             return (237, 66, 69)
         else:
+            # offline, invisible или неизвестный статус
             return (116, 127, 141)
-    except Exception:
+            
+    except Exception as e:
+        logging.error(f"Ошибка при получении статуса для {member.display_name}: {e}")
         return (116, 127, 141)
 
 
@@ -329,6 +335,18 @@ async def _get_marriage_display(cursor, member: discord.Member, guild: discord.G
 
 
 async def create_profile_image(cursor, member: discord.Member, guild: discord.Guild) -> io.BytesIO:
+    # ПРИНУДИТЕЛЬНО ОБНОВЛЯЕМ ДАННЫЕ ПОЛЬЗОВАТЕЛЯ
+    try:
+        # Получаем свежие данные о пользователе с сервера
+        fresh_member = guild.get_member(member.id)
+        if fresh_member is None:
+            fresh_member = await guild.fetch_member(member.id)
+        if fresh_member is not None:
+            member = fresh_member
+            logging.info(f"Обновлены данные для {member.display_name}, статус: {member.raw_status}")
+    except Exception as e:
+        logging.error(f"Не удалось обновить данные пользователя {member.id}: {e}")
+    
     # Статистика
     result = await cursor.execute(
         'SELECT balance, voice_hours, messages_count FROM user_profiles WHERE user_id = $1',
@@ -386,10 +404,7 @@ async def create_profile_image(cursor, member: discord.Member, guild: discord.Gu
     
     # Рисуем обводку цветом статуса пользователя (толщина 1px)
     status_color = _get_status_color(member)
-    
-    # Дополнительная проверка: убеждаемся что статус реально получен
-    if status_color == DEFAULT_RING_COLOR and member.status != discord.Status.offline:
-        logging.warning(f"Статус {member.display_name} = {member.status}, но цвет по умолчанию. Проверьте константы!")
+    logging.info(f"Цвет рамки для {member.display_name}: {status_color}")
     
     _draw_avatar_ring(base, AVATAR_CENTER, AVATAR_RADIUS, AVATAR_RING_WIDTH, status_color)
 
