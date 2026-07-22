@@ -35,7 +35,7 @@ intents.message_content = True
 intents.messages = True
 intents.guild_messages = True
 intents.typing = False
-intents.presences = False
+intents.presences = True
 intents.reactions = True
 intents.voice_states = True
 
