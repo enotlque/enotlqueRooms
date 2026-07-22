@@ -1,5 +1,6 @@
 import io
 import os
+import logging
 
 import discord
 from datetime import datetime
@@ -152,8 +153,19 @@ def _get_status_color(member: discord.Member) -> tuple:
     """Возвращает цвет статуса пользователя в формате RGB"""
     try:
         status = member.status
-        return STATUS_COLORS.get(status, DEFAULT_RING_COLOR)
-    except Exception:
+        logging.info(f"DEBUG: Получен статус для {member.display_name}: {status} (тип: {type(status)})")
+        
+        # Проверяем, что статус существует и является валидным
+        if status is None:
+            logging.warning(f"Статус для {member.display_name} равен None")
+            return DEFAULT_RING_COLOR
+            
+        color = STATUS_COLORS.get(status, DEFAULT_RING_COLOR)
+        logging.info(f"DEBUG: Цвет для статуса {status}: {color}")
+        return color
+        
+    except Exception as e:
+        logging.error(f"Ошибка при получении статуса для {member.display_name}: {e}")
         return DEFAULT_RING_COLOR
 
 
@@ -378,6 +390,11 @@ async def create_profile_image(cursor, member: discord.Member, guild: discord.Gu
     
     # Рисуем обводку цветом статуса пользователя (толщина 1px)
     status_color = _get_status_color(member)
+    
+    # Дополнительная проверка: убеждаемся что статус реально получен
+    if status_color == DEFAULT_RING_COLOR and member.status != discord.Status.offline:
+        logging.warning(f"Статус {member.display_name} = {member.status}, но цвет по умолчанию. Проверьте константы!")
+    
     _draw_avatar_ring(base, AVATAR_CENTER, AVATAR_RADIUS, AVATAR_RING_WIDTH, status_color)
 
     # Ник
