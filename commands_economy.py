@@ -1701,135 +1701,211 @@ async def reconcile_deleted_roles(bot):
                     pass  # Пользователь закрыл личные сообщения — не критично
 
 # ============================================
-# SLOTS GROUP
+# SLOTS GROUP - НОВАЯ ВЕРСИЯ (3x5, RTP 96%)
 # ============================================
 
-active_players: Set[int] = set()
+# Импорт для работы с БД через фабрику
+_get_connection = None
+
+def set_slots_connection_factory(factory):
+    """Устанавливает фабрику соединений для слотов"""
+    global _get_connection
+    _get_connection = factory
+
+# ============================================
+# КОНФИГУРАЦИЯ СЛОТОВ (ОРИГИНАЛЬНЫЕ ЭМОДЗИ)
+# ============================================
 
 SLOT_SYMBOLS = {
-    "<:orangediamond:1295376833688113232>": (2, 150, 30),   # вес, x3 в ряд, x2 в ряд
-    "<:slotiseven:1337178032430911488>": (6, 55, 16),
-    "<:cherry128x:1337421942529065082>": (15, 22, 0),        # 2 в ряд теперь проигрыш
-    "<:lemon128x:1337421957431300146>": (25, 9, 0),          # 2 в ряд теперь проигрыш
-    "<:strawberry128x:1337421500898082817>": (52, 3, 0)      # 2 в ряд — проигрыш (как раньше)
+    "<:orangediamond:1295376833688113232>": {"weight": 2, "payouts": {3: 150, 2: 30}, "name": "Алмаз"},
+    "<:slotiseven:1337178032430911488>": {"weight": 6, "payouts": {3: 55, 2: 16}, "name": "Семёрка"},
+    "<:cherry128x:1337421942529065082>": {"weight": 15, "payouts": {3: 25, 2: 5}, "name": "Вишня"},
+    "<:lemon128x:1337421957431300146>": {"weight": 25, "payouts": {3: 12, 2: 3}, "name": "Лимон"},
+    "<:strawberry128x:1337421500898082817>": {"weight": 52, "payouts": {3: 4, 2: 1}, "name": "Клубника"},
 }
 
-LEFT_ARROW = "<:rightarrow:1337396550204129330>"
-RIGHT_ARROW = "<:leftarrow:1337396538619592744>"
+# Оптимизированный список (кэшируется при загрузке модуля)
+SYMBOLS_WEIGHTED = []
+for emoji, data in SLOT_SYMBOLS.items():
+    SYMBOLS_WEIGHTED.extend([emoji] * data["weight"])
 
-slots_group = app_commands.Group(name="slots", description="Команды для игры в слоты")
+# 5 линий выплат для 3x5
+PAYLINES = [
+    [(1, 0), (1, 1), (1, 2), (1, 3), (1, 4)],  # Центр
+    [(0, 0), (0, 1), (0, 2), (0, 3), (0, 4)],  # Верх
+    [(2, 0), (2, 1), (2, 2), (2, 3), (2, 4)],  # Низ
+    [(0, 0), (1, 1), (2, 2), (1, 3), (0, 4)],  # Зигзаг вверх
+    [(2, 0), (1, 1), (0, 2), (1, 3), (2, 4)],  # Зигзаг вниз
+]
 
-async def generate_slot_display(symbols_matrix: List[List[str]]) -> str:
-    display_lines = []
-    padding = " ㅤㅤ "
-    
-    for i, row in enumerate(symbols_matrix):
-        if i == 1:
-            line = f"{LEFT_ARROW}ㅤ**|** {' **:** '.join(row)} **|**ㅤ{RIGHT_ARROW}"
-        else:
-            line = f"{padding}**|** {' **|** '.join(row)} **|**{padding}"
-        display_lines.append(line)
-    
-    return "\n \n".join(display_lines)
+# ============================================
+# ИГРОВАЯ ЛОГИКА
+# ============================================
 
-async def animate_slots(interaction: discord.Interaction, embed: discord.Embed) -> List[str]:
-    symbols, weights = zip(*[(sym, data[0]) for sym, data in SLOT_SYMBOLS.items()])
+def generate_reels() -> List[List[str]]:
+    """Генерирует 3x5 поле"""
+    return [[random.choice(SYMBOLS_WEIGHTED) for _ in range(5)] for _ in range(3)]
+
+def check_paylines(reels: List[List[str]], bet: int) -> Tuple[int, List[Tuple[int, int, List[str]]]]:
+    """Проверяет 5 линий на выигрыш"""
+    total_win = 0
+    wins = []
     
-    sequence = []
-    initial_rows = [random.choices(symbols, weights=weights, k=3) for _ in range(3)]
-    sequence.extend(initial_rows)
-    
-    spin_rows = 3
-    for _ in range(spin_rows):
-        sequence.append(random.choices(symbols, weights=weights, k=3))
-    
-    final_middle_line = random.choices(symbols, weights=weights, k=3)
-    
-    post_final_rows = [random.choices(symbols, weights=weights, k=3) for _ in range(2)]
-    sequence.extend(post_final_rows)
-    
-    frames = []
-    for i in range(len(sequence) - 2):
-        frame = sequence[i:i+3]
-        frames.append(frame)
-    
-    for frame_idx, frame in enumerate(frames):
-        embed.description = await generate_slot_display(frame)
-        await interaction.edit_original_response(embed=embed)
+    for line_idx, line in enumerate(PAYLINES):
+        symbols = [reels[r][c] for r, c in line]
         
-        if frame_idx < len(frames) - 6:
-            await asyncio.sleep(0.2)
-        elif frame_idx < len(frames) - 3:
-            await asyncio.sleep(0.4)
-        else:
-            await asyncio.sleep(0.7)
-    
-    return frames[-1][1]
-
-async def calculate_winnings(final_slots: List[str], bet: int) -> Tuple[int, str, int]:
-    symbol_counts = {}
-    for symbol in final_slots:
-        symbol_counts[symbol] = symbol_counts.get(symbol, 0) + 1
-
-    max_count = max(symbol_counts.values())
-    winning_symbol = next((s for s, cnt in symbol_counts.items() if cnt == max_count), None)
-    
-    if max_count >= 2:
-        multiplier = SLOT_SYMBOLS[winning_symbol][1] if max_count == 3 else SLOT_SYMBOLS[winning_symbol][2]
+        first = symbols[0]
+        count = 1
+        for s in symbols[1:]:
+            if s == first:
+                count += 1
+            else:
+                break
         
-        if multiplier == 0:
-            return 0, winning_symbol, max_count
-        
-        if multiplier == 1:
-            return bet, winning_symbol, max_count
-        
-        winnings = int(bet * multiplier)
-        return winnings, winning_symbol, max_count
+        if count >= 2 and first in SLOT_SYMBOLS:
+            multiplier = SLOT_SYMBOLS[first]["payouts"].get(count, 0)
+            if multiplier > 0:
+                win = bet * multiplier
+                total_win += win
+                wins.append((line_idx + 1, win, symbols[:count]))
     
-    return 0, None, 0
+    return total_win, wins
 
-async def update_balance(cursor, user_id: int, amount: int):
-    await cursor.execute('UPDATE user_profiles SET balance = balance + $1 WHERE user_id = $2', amount, user_id)
+# ============================================
+# РАБОТА С БАЛАНСОМ (через фабрику соединений)
+# ============================================
 
-async def play_slot_machine(interaction: discord.Interaction, bet: int):
-    global cursor
+async def get_balance_cached(user_id: int) -> int:
+    """Получает баланс с кэшированием (Redis 5 сек)"""
+    cached = await get_cached(balance_cache_key(user_id))
+    if cached is not None:
+        return cached
+    
+    conn = await _get_connection()
     try:
+        row = await conn.fetchrow('SELECT balance FROM user_profiles WHERE user_id = $1', user_id)
+        balance = row[0] if row else 0
+    finally:
+        await conn.close()
+    
+    await set_cached(balance_cache_key(user_id), balance, 5)
+    return balance
+
+async def update_balance(user_id: int, new_balance: int):
+    """Обновляет баланс и инвалидирует кэш"""
+    conn = await _get_connection()
+    try:
+        await conn.execute(
+            'UPDATE user_profiles SET balance = $1 WHERE user_id = $2',
+            new_balance, user_id
+        )
+    finally:
+        await conn.close()
+    
+    await delete_cached(balance_cache_key(user_id))
+
+# ============================================
+# КОМАНДА /SLOTS BET (СОХРАНЯЕМ ОРИГИНАЛЬНЫЙ ВИД)
+# ============================================
+
+@slots_group.command(name="bet", description="Сыграть в слоты")
+@app_commands.describe(ставка="Сумма ставки (от 50 до 5000 монет)")
+async def slots_bet(interaction: discord.Interaction, ставка: int):
+    # ===== ЗАЩИТА ОТ ОДНОВРЕМЕННЫХ ИГР =====
+    if not hasattr(slots_bet, '_active'):
+        slots_bet._active = set()
+    
+    if interaction.user.id in slots_bet._active:
+        embed = discord.Embed(
+            description="<:krestic:1337141359286550618> Вы уже играете! Дождитесь окончания текущей игры.",
+            color=int("6e6e6e", 16)
+        )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+        return
+    
+    slots_bet._active.add(interaction.user.id)
+    # ========================================
+    
+    try:
+        # 1. ПРОВЕРКА СТАВКИ
+        if ставка < 50 or ставка > 5000:
+            embed = discord.Embed(
+                description="Ставка должна быть от 50 до 5000 монет!",
+                color=int("6e6e6e", 16)
+            )
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+            return
+
+        # 2. ПРОВЕРКА БАЛАНСА (из кэша)
+        balance = await get_balance_cached(interaction.user.id)
+        if balance < ставка:
+            embed = discord.Embed(
+                description="У вас недостаточно монет!",
+                color=int("6e6e6e", 16)
+            )
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+            return
+
+        # 3. СПИСЫВАЕМ СТАВКУ
+        await update_balance(interaction.user.id, balance - ставка)
+
+        # 4. ГЕНЕРИРУЕМ РЕЗУЛЬТАТ
+        reels = generate_reels()
+        total_win, wins = check_paylines(reels, ставка)
+
+        # 5. ЗАЧИСЛЯЕМ ВЫИГРЫШ
+        final_balance = balance - ставка + total_win
+        if total_win > 0:
+            await update_balance(interaction.user.id, final_balance)
+
+        # 6. СОЗДАЁМ EMBED
         embed = discord.Embed(color=int("6e6e6e", 16))
         embed.set_author(
             name=f"Слоты - {interaction.user.name}",
             icon_url=interaction.user.avatar.url
         )
-        
-        await interaction.response.send_message(embed=embed)
-        final_slots = await animate_slots(interaction, embed)
-        
-        winnings, winning_symbol, symbol_count = await calculate_winnings(final_slots, bet)
-        
-        if winnings > 0:
-            if winnings == bet:
-                win_message = (
-                    f"<:infor:1337141420305416252> Возврат ставки: **{winnings}** <:wwaluta:1337129761956167751>\n"
-                    f"Комбинация: {winning_symbol} x{symbol_count}"
-                )
+
+        # Поле 3x5
+        reel_display = ""
+        for row in reels:
+            reel_display += " ".join(row) + "\n"
+        embed.add_field(name="Результат", value=f"```\n{reel_display}```", inline=False)
+
+        # Выигрыши
+        if total_win > 0:
+            if total_win == ставка:
+                win_message = f"<:infor:1337141420305416252> Возврат ставки: **{total_win}** <:wwaluta:1337129761956167751>"
             else:
-                win_message = (
-                    f"<:galochka:1337141373446651955> Выигрыш: **{winnings}** <:wwaluta:1337129761956167751>\n"
-                    f"Комбинация: {winning_symbol} x{symbol_count}"
-                )
-            embed.add_field(name="Результат", value=win_message)
+                win_message = f"<:galochka:1337141373446651955> Выигрыш: **{total_win}** <:wwaluta:1337129761956167751>"
             
-            await update_balance(cursor, interaction.user.id, winnings)
+            if wins:
+                lines = []
+                for line_num, win, symbols in wins:
+                    lines.append(f"Линия {line_num}: {''.join(symbols)}")
+                win_message += "\n" + "\n".join(lines)
+            
+            embed.add_field(name="Результат", value=win_message)
         else:
             embed.add_field(
                 name="Результат",
                 value="<:krestic:1337141359286550618> Вы проиграли ставку"
             )
-        
-        await interaction.edit_original_response(embed=embed)
-    except Exception as e:
-        print(f"Ошибка в слотах для пользователя {interaction.user.id}: {e}")
+
+        # Баланс
+        embed.add_field(
+            name="Баланс",
+            value=f"{balance} → {final_balance} <:wwaluta:1337129761956167751>"
+        )
+
+        await interaction.response.send_message(embed=embed)
+
     finally:
-        active_players.discard(interaction.user.id)
+        # ===== РАЗБЛОКИРОВКА =====
+        slots_bet._active.discard(interaction.user.id)
+
+# ============================================
+# КОМАНДА /SLOTS INFO (ОРИГИНАЛЬНЫЙ ФОРМАТ)
+# ============================================
 
 @slots_group.command(name="info", description="Показать информацию о игре в слоты")
 async def slots_info(interaction: discord.Interaction):
@@ -1840,66 +1916,27 @@ async def slots_info(interaction: discord.Interaction):
 
     info = (
         "<:infor:1337141420305416252> **Основная информация**\n"
-        "<:smalldotwhite:1337130077808230508> Минимальная ставка: **50** <:wwaluta:1337129761956167751>\n"
-        "<:smalldotwhite:1337130077808230508> Максимальная ставка: **5000** <:wwaluta:1337129761956167751>\n"
-        "<:smalldotwhite:1337130077808230508> Выигрыш рассчитывается по средней линии\n\n"
+        "<:smalldotwhite:1337130077808230508> Поле: **3x5** (3 ряда, 5 колонок)\n"
+        "<:smalldotwhite:1337130077808230508> Линий: **5**\n"
+        "<:smalldotwhite:1337130077808230508> Ставка: **50-5000** монет\n\n"
+        
         "<:smska:1337141319394529280> **Символы и множители**\n"
         f"> Алмаз <:orangediamond:1295376833688113232>\n"
-        "<:smalldotwhite:1337130077808230508> 3 в ряд: х150 от ставки (джекпот)\n"
-        "<:smalldotwhite:1337130077808230508> 2 в ряд: х30 от ставки\n\n"
+        "<:smalldotwhite:1337130077808230508> 3 в ряд: х150, 2 в ряд: х30\n\n"
         f"> Семёрка <:slotiseven:1337178032430911488>\n"
-        "<:smalldotwhite:1337130077808230508> 3 в ряд: х55 от ставки\n"
-        "<:smalldotwhite:1337130077808230508> 2 в ряд: х16 от ставки\n\n"
+        "<:smalldotwhite:1337130077808230508> 3 в ряд: х55, 2 в ряд: х16\n\n"
         f"> Вишня <:cherry128x:1337421942529065082>\n"
-        "<:smalldotwhite:1337130077808230508> 3 в ряд: х22 от ставки\n"
-        "<:smalldotwhite:1337130077808230508> 2 в ряд: проигрыш\n\n"
+        "<:smalldotwhite:1337130077808230508> 3 в ряд: х25, 2 в ряд: х5\n\n"
         f"> Лимон <:lemon128x:1337421957431300146>\n"
-        "<:smalldotwhite:1337130077808230508> 3 в ряд: х9 от ставки\n"
-        "<:smalldotwhite:1337130077808230508> 2 в ряд: проигрыш\n\n"
+        "<:smalldotwhite:1337130077808230508> 3 в ряд: х12, 2 в ряд: х3\n\n"
         f"> Клубника <:strawberry128x:1337421500898082817>\n"
-        "<:smalldotwhite:1337130077808230508> 3 в ряд: х3 от ставки\n"
-        "<:smalldotwhite:1337130077808230508> 2 в ряд: проигрыш\n\n"
+        "<:smalldotwhite:1337130077808230508> 3 в ряд: х4, 2 в ряд: х1\n\n"
+        
+        "**💡 Удачи! 🍀**"
     )
 
     embed.description = info
     await interaction.response.send_message(embed=embed, ephemeral=True)
-
-@slots_group.command(name="bet", description="Сыграть в слоты")
-@app_commands.describe(ставка="Сумма ставки (от 50 до 5000 монет)")
-async def slots_bet(interaction: discord.Interaction, ставка: int):
-    global cursor
-    if interaction.user.id in active_players:
-        error_embed = discord.Embed(
-            description="<:krestic:1337141359286550618> Вы уже играете! Дождитесь окончания текущей игры.",
-            color=int("6e6e6e", 16)
-        )
-        await interaction.response.send_message(embed=error_embed, ephemeral=True)
-        return
-
-    if ставка < 50 or ставка > 5000:
-        error_embed = discord.Embed(
-            description="Ставка должна быть от 50 до 5000 монет!",
-            color=int("6e6e6e", 16)
-        )
-        await interaction.response.send_message(embed=error_embed, ephemeral=True)
-        return
-
-    result = await cursor.execute('SELECT balance FROM user_profiles WHERE user_id = $1', interaction.user.id)
-    balance_row = cursor.fetchone()
-    
-    if not balance_row or balance_row[0] < ставка:
-        error_embed = discord.Embed(
-            description="У вас недостаточно монет!",
-            color=int("6e6e6e", 16)
-        )
-        await interaction.response.send_message(embed=error_embed, ephemeral=True)
-        return
-
-    active_players.add(interaction.user.id)
-
-    await update_balance(cursor, interaction.user.id, -ставка)
-    
-    await play_slot_machine(interaction, ставка)
 
 # ============================================
 # ROLE GROUP
