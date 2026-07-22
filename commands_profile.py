@@ -11,16 +11,15 @@ from PIL import Image, ImageDraw, ImageFont
 
 TEMPLATE_PATH = "PlaceholderProfile1.png"
 FONT_BOLD_PATH = "ProximaNova-Bold.ttf"
-FONT_REGULAR_PATH = "ProximaNova-Regular.ttf"  # для "На сервере с ..." — нужен файл в корне проекта
+FONT_REGULAR_PATH = "ProximaNova-Regular.ttf"
 
 # --------------------------------------------------------------------------
 # КООРДИНАТЫ ДЛЯ РАЗМЕРА 1200x640 (откалибровано по скриншоту)
 # --------------------------------------------------------------------------
 
-DEBUG_GRID = False  # True -> поверх картинки рисуется сетка 50px для калибровки координат
+DEBUG_GRID = False
 
 # Аватар
-# Замерено напрямую по PlaceholderProfile1.png: круг занимает x 528-671, y 107-250
 AVATAR_CENTER = (600, 178)
 AVATAR_RADIUS = 71
 AVATAR_SIZE = AVATAR_RADIUS * 2
@@ -28,70 +27,60 @@ AVATAR_RING_WIDTH = 2
 AVATAR_RING_COLOR = (255, 255, 255, 200)
 AVATAR_SUPERSAMPLE = 4
 
-# Ник под аватаром. Панель аватара в шаблоне: x 458-741 (ширина 283), y 84-389.
-# MAX_WIDTH должен помещаться в реальную ширину панели, а не быть больше её —
-# именно поэтому длинный ник раньше вылезал за края.
+# Ник под аватаром
 USERNAME_CENTER_X = 600
 USERNAME_CENTER_Y = 285
 USERNAME_MAX_WIDTH = 240
 USERNAME_FONT_SIZE = 32
 
-# "На сервере с ..." — тонким начертанием (Regular), ниже ника
+# "На сервере с ..." - цвет #b6b6b6, размер 12pt
 JOINED_CENTER_X = 600
 JOINED_CENTER_Y = 369
 JOINED_MAX_WIDTH = 250
-JOINED_FONT_SIZE = 16
+JOINED_FONT_SIZE = 12
+JOINED_COLOR = (182, 182, 182)  # #b6b6b6
 
-# ЛЕВАЯ КОЛОНКА (Брачный профиль / Личная роль / Личная комната)
+# ЛЕВАЯ КОЛОНКА
 LEFT_VALUE_FONT_SIZE = 22
-
-# Границы боксов левой колонки в шаблоне (для справки):
-#   Брачный профиль: y  84-220 (заголовок ~102-119)
-#   Личная роль:      y 238-374 (заголовок ~256-273, иконка ~288-334, справа от иконки x 197-413)
-#   Личная комната:    y 392-528 (заголовок ~419-432)
-# Общий центр по X для всей левой колонки (box: x 130-413)
 LEFT_COLUMN_CENTER_X = 271
 
-# Брачный профиль — основная строка остаётся по левому краю (под заголовком)
+# Брачный профиль
 LEFT_X = 160
 LEFT_MAX_WIDTH = 235
 MARRIAGE_CENTER_Y = 155
 
-# "вместе N дней" — отдельная, более мелкая (14пт) строка по центру бокса
+# "вместе N дней"
 MARRIAGE_DAYS_CENTER_X = LEFT_COLUMN_CENTER_X
 MARRIAGE_DAYS_CENTER_Y = 194
 MARRIAGE_DAYS_MAX_WIDTH = 110
 MARRIAGE_DAYS_FONT_SIZE = 14
 
-# Личная роль — значение теперь СПРАВА от иконки (та же строка), по центру
-# свободного места (иконка занимает x до ~197, бокс справа заканчивается на 413)
+# Личная роль
 ROLE_VALUE_CENTER_X = 305
 ROLE_VALUE_CENTER_Y = 311
 ROLE_VALUE_MAX_WIDTH = 170
 
-# Личная комната — значение между заголовком и нижним краем бокса, по центру
+# Личная комната
 ROOM_VALUE_CENTER_X = LEFT_COLUMN_CENTER_X
 ROOM_VALUE_CENTER_Y = 466
 ROOM_VALUE_MAX_WIDTH = 250
 
-# ПРАВАЯ КОЛОНКА (Баланс / В войсе / Сообщения / Место в топе)
+# ПРАВАЯ КОЛОНКА
 RIGHT_BLOCK_RIGHT_EDGE = 1040
 RIGHT_MAX_WIDTH = 170
 RIGHT_VALUE_FONT_SIZE = 22
 
-# Значения правой колонки — центр строки по Y, замерено по центрам иконок/лейблов в шаблоне
+# Значения правой колонки - скорректированные позиции
 RIGHT_VALUES_CENTER_Y = {
-    "balance": 126,      # "Баланс"
-    "voice": 192,        # "В войсе"
-    "messages": 259,     # "Сообщения"
-    "rank": 330,         # "Место в топе" — чуть ниже центра иконки (было 322)
+    "balance": 128,   # +2 пикселя
+    "voice": 194,     # +2 пикселя
+    "messages": 261,  # +2 пикселя
+    "rank": 324,      # изменено с 330 на 324
 }
 
 # Цвет текста
 TEXT_COLOR = (255, 255, 255)
 
-# Отключаем "raqm"-шейпинг (продвинутый кернинг/лигатуры), из-за которого
-# некоторые пары букв (например "tl") могли слипаться на кастомном шрифте.
 _BASIC_LAYOUT = getattr(ImageFont, "Layout", None)
 _BASIC_LAYOUT = _BASIC_LAYOUT.BASIC if _BASIC_LAYOUT else getattr(ImageFont, "LAYOUT_BASIC", 0)
 
@@ -115,11 +104,6 @@ def _truncate_to_width(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.Fre
 
     return (truncated.rstrip() + ellipsis) if truncated else ellipsis
 
-
-# Все три функции ниже принимают Y как ВЕРТИКАЛЬНЫЙ ЦЕНТР строки текста
-# (anchor="?m" — middle по вертикали), а не координату верхнего края.
-# Это устраняет "плавающее" позиционирование, которое давало разный результат
-# для разных шрифтов/размеров при ручном расчёте через textbbox.
 
 def _draw_centered_text(draw, center_x: int, center_y: int, text: str, font, max_width: int, fill=TEXT_COLOR) -> None:
     text = _truncate_to_width(draw, text, font, max_width)
@@ -177,14 +161,12 @@ def _draw_debug_grid(image: Image.Image) -> None:
     draw = ImageDraw.Draw(image)
     w, h = image.size
     
-    # Горизонтальные линии
     for y in range(0, h, 50):
         color = (255, 0, 0) if y % 100 == 0 else (0, 255, 255)
         draw.line([(0, y), (w, y)], fill=color, width=1)
         if y % 100 == 0:
             draw.text((5, y + 2), f"y={y}", fill=(255, 255, 0), font=ImageFont.load_default())
     
-    # Вертикальные линии
     for x in range(0, w, 50):
         color = (255, 0, 0) if x % 100 == 0 else (0, 255, 0)
         draw.line([(x, 0), (x, h)], fill=color, width=1)
@@ -252,6 +234,13 @@ async def _get_room_name(cursor, member: discord.Member):
     return rooms_sorted[0][0]
 
 
+def _shorten_name(name: str, max_len: int = 12) -> str:
+    """Сокращает имя до указанной длины, если оно слишком длинное"""
+    if len(name) <= max_len:
+        return name
+    return name[:max_len] + "…"
+
+
 async def _get_marriage_display(cursor, member: discord.Member, guild: discord.Guild):
     result = await cursor.execute(
         'SELECT user1_id, user2_id, created_at FROM marriages WHERE user1_id = $1 OR user2_id = $1',
@@ -271,7 +260,23 @@ async def _get_marriage_display(cursor, member: discord.Member, guild: discord.G
         except discord.NotFound:
             return None, None
 
-    couple_line = f"{member.display_name} \u2665 {partner.display_name}"
+    # Сокращаем оба имени до разумной длины (максимум 12 символов каждое)
+    name1 = _shorten_name(member.display_name, 12)
+    name2 = _shorten_name(partner.display_name, 12)
+    
+    # Дополнительно проверяем общую длину строки
+    couple_line = f"{name1} \u2665 {name2}"
+    
+    # Максимальная длина видимой части - около 27 символов с учётом сердечка
+    MAX_VISIBLE_LEN = 27
+    if len(couple_line) > MAX_VISIBLE_LEN:
+        # Сокращаем оба имени пропорционально
+        excess = len(couple_line) - MAX_VISIBLE_LEN
+        cut1 = min(len(name1) - 1, excess // 2 + (excess % 2))
+        cut2 = min(len(name2) - 1, excess // 2)
+        name1 = name1[:len(name1) - cut1] + "…" if cut1 > 0 else name1
+        name2 = name2[:len(name2) - cut2] + "…" if cut2 > 0 else name2
+        couple_line = f"{name1} \u2665 {name2}"
 
     days_line = None
     if created_at:
@@ -345,8 +350,8 @@ async def create_profile_image(cursor, member: discord.Member, guild: discord.Gu
     # Ник
     _draw_centered_text(draw, USERNAME_CENTER_X, USERNAME_CENTER_Y, member.display_name, font_username, USERNAME_MAX_WIDTH)
 
-    # Дата на сервере
-    _draw_centered_text(draw, JOINED_CENTER_X, JOINED_CENTER_Y, f"На сервере с {joined_str}г", font_joined, JOINED_MAX_WIDTH)
+    # Дата на сервере - цвет #b6b6b6, размер 12pt
+    _draw_centered_text(draw, JOINED_CENTER_X, JOINED_CENTER_Y, f"На сервере с {joined_str}г", font_joined, JOINED_MAX_WIDTH, fill=JOINED_COLOR)
 
     # ===== ЛЕВАЯ КОЛОНКА =====
     # Брачный профиль — основная строка по левому краю, "вместе N дней" — мельче и по центру бокса
