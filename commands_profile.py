@@ -21,7 +21,7 @@ FONT_REGULAR_PATH = "ProximaNova-Regular.ttf"
 DEBUG_GRID = False
 
 # Аватар
-AVATAR_CENTER = (600, 178)
+AVATAR_CENTER = (600, 179)  # было 178, сдвинули на 1px вниз
 AVATAR_RADIUS = 71
 AVATAR_SIZE = AVATAR_RADIUS * 2
 AVATAR_RING_WIDTH = 2
@@ -121,11 +121,6 @@ def _draw_centered_text(draw, center_x: int, center_y: int, text: str, font, max
     draw.text((center_x, center_y), text, font=font, fill=fill, anchor="mm")
 
 
-def _draw_left_aligned_text(draw, x: int, center_y: int, text: str, font, max_width: int, fill=TEXT_COLOR) -> None:
-    text = _truncate_to_width(draw, text, font, max_width)
-    draw.text((x, center_y), text, font=font, fill=fill, anchor="lm")
-
-
 def _draw_right_aligned_text(draw, right_x: int, center_y: int, text: str, font, max_width: int, fill=TEXT_COLOR) -> None:
     text = _truncate_to_width(draw, text, font, max_width)
     draw.text((right_x, center_y), text, font=font, fill=fill, anchor="rm")
@@ -150,25 +145,17 @@ async def _fetch_circular_avatar(member: discord.abc.User, diameter: int) -> Ima
 
 
 def _get_status_color(member: discord.Member) -> tuple:
-    """Возвращает цвет статуса пользователя в формате RGB"""
-    try:
-        # Используем raw_status - он самый надежный
-        raw_status = member.raw_status
-        logging.info(f"Статус {member.display_name}: raw_status='{raw_status}'")
-        
-        if raw_status == "online":
-            return (57, 191, 79)
-        elif raw_status == "idle":
-            return (250, 166, 26)
-        elif raw_status == "dnd":
-            return (237, 66, 69)
-        else:
-            # offline, invisible или неизвестный статус
-            return (116, 127, 141)
-            
-    except Exception as e:
-        logging.error(f"Ошибка при получении статуса для {member.display_name}: {e}")
-        return (116, 127, 141)
+    """Возвращает цвет рамки аватара в зависимости от текущего статуса участника.
+
+    ВАЖНО: member.status корректно заполняется ТОЛЬКО если у бота включён
+    Presence Intent (intents.presences = True в коде клиента) и он также
+    включён в Discord Developer Portal -> Bot -> Privileged Gateway Intents.
+    Member, полученный через guild.fetch_member() (REST API), presence-данных
+    не содержит вообще и всегда будет выглядеть как offline — см. вызов ниже.
+    """
+    color = STATUS_COLORS.get(member.status, DEFAULT_RING_COLOR)
+    logging.debug(f"Статус {member.display_name}: {member.status} -> цвет {color}")
+    return color
 
 
 def _draw_avatar_ring(base: Image.Image, center: tuple, radius: int, width: int, color: tuple) -> None:
@@ -335,15 +322,20 @@ async def _get_marriage_display(cursor, member: discord.Member, guild: discord.G
 
 
 async def create_profile_image(cursor, member: discord.Member, guild: discord.Guild) -> io.BytesIO:
-    # ПРИНУДИТЕЛЬНО ОБНОВЛЯЕМ ДАННЫЕ ПОЛЬЗОВАТЕЛЯ
+    # Обновляем данные участника (ник, аватар и т.д.), но статус запоминаем
+    # ДО этого обновления. guild.fetch_member() ходит в REST API и никогда
+    # не возвращает presence (онлайн/офлайн/... статус) - только
+    # get_member() из кэша шлюза даёт актуальный статус. Поэтому если после
+    # обновления member окажется получен через fetch_member, его .status
+    # всегда будет offline, а рамка - всегда серой.
+    status_source = guild.get_member(member.id) or member
+
     try:
-        # Получаем свежие данные о пользователе с сервера
         fresh_member = guild.get_member(member.id)
         if fresh_member is None:
             fresh_member = await guild.fetch_member(member.id)
         if fresh_member is not None:
             member = fresh_member
-            logging.info(f"Обновлены данные для {member.display_name}, статус: {member.raw_status}")
     except Exception as e:
         logging.error(f"Не удалось обновить данные пользователя {member.id}: {e}")
     
@@ -403,9 +395,8 @@ async def create_profile_image(cursor, member: discord.Member, guild: discord.Gu
     base.alpha_composite(avatar, avatar_pos)
     
     # Рисуем обводку цветом статуса пользователя (толщина 1px)
-    status_color = _get_status_color(member)
-    logging.info(f"Цвет рамки для {member.display_name}: {status_color}")
-    
+    status_color = _get_status_color(status_source)
+
     _draw_avatar_ring(base, AVATAR_CENTER, AVATAR_RADIUS, AVATAR_RING_WIDTH, status_color)
 
     # Ник
