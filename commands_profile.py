@@ -154,7 +154,10 @@ def _get_status_color(member: discord.Member) -> tuple:
     не содержит вообще и всегда будет выглядеть как offline — см. вызов ниже.
     """
     color = STATUS_COLORS.get(member.status, DEFAULT_RING_COLOR)
-    logging.debug(f"Статус {member.display_name}: {member.status} -> цвет {color}")
+    logging.info(
+        f"[status_ring] {member.display_name}: member.status={member.status!r} "
+        f"(type={type(member).__name__}) -> цвет {color}"
+    )
     return color
 
 
@@ -329,6 +332,11 @@ async def create_profile_image(cursor, member: discord.Member, guild: discord.Gu
     # обновления member окажется получен через fetch_member, его .status
     # всегда будет offline, а рамка - всегда серой.
     status_source = guild.get_member(member.id) or member
+    if status_source is member and guild.get_member(member.id) is None:
+        logging.warning(
+            f"[status_ring] {member.id} не найден в кэше guild.get_member() — "
+            f"статус будет взят из переданного объекта member (может быть неактуален)."
+        )
 
     try:
         fresh_member = guild.get_member(member.id)
