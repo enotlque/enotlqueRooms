@@ -1704,7 +1704,8 @@ async def reconcile_deleted_roles(bot):
 # SLOTS GROUP - НОВАЯ ВЕРСИЯ (3x5, RTP 96%)
 # ============================================
 
-# Импорт для работы с БД через фабрику
+slots_group = app_commands.Group(name="slots", description="Команды для игры в слоты")
+
 _get_connection = None
 
 def set_slots_connection_factory(factory):
