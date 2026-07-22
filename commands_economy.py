@@ -802,14 +802,14 @@ async def me(interaction: discord.Interaction, пользователь: discord
                 )
                 return
             class AddBalanceModal(ui.Modal, title="Пополнить баланс"):
-                amount = ui.TextInput(label="Сумма (мин. 90 монет)", min_length=2, max_length=10, required=True)
+                amount = ui.TextInput(label="Сумма (мин. 1 монета)", min_length=1, max_length=10, required=True)
 
                 async def on_submit(self, modal_interaction: discord.Interaction):
                     global cursor
                     try:
                         amount = int(self.amount.value)
-                        if amount < 90:
-                            await modal_interaction.response.send_message("Минимальная сумма пополнения — 90 монет.", ephemeral=True)
+                        if amount < 1:
+                            await modal_interaction.response.send_message("Минимальная сумма пополнения — 1 монета.", ephemeral=True)
                             return
 
                         result = await cursor.execute('SELECT balance FROM user_profiles WHERE user_id = $1', user.id)
