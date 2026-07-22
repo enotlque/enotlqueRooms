@@ -74,7 +74,7 @@ ROLE_VALUE_MAX_WIDTH = 170
 
 # Личная комната
 ROOM_VALUE_CENTER_X = LEFT_COLUMN_CENTER_X
-ROOM_VALUE_CENTER_Y = 466
+ROOM_VALUE_CENTER_Y = 468  # было 466, сдвинули на 2px вниз
 ROOM_VALUE_MAX_WIDTH = 250
 
 # ПРАВАЯ КОЛОНКА - подняты на 1 пиксель
@@ -153,12 +153,7 @@ def _get_status_color(member: discord.Member) -> tuple:
     Member, полученный через guild.fetch_member() (REST API), presence-данных
     не содержит вообще и всегда будет выглядеть как offline — см. вызов ниже.
     """
-    color = STATUS_COLORS.get(member.status, DEFAULT_RING_COLOR)
-    logging.info(
-        f"[status_ring] {member.display_name}: member.status={member.status!r} "
-        f"(type={type(member).__name__}) -> цвет {color}"
-    )
-    return color
+    return STATUS_COLORS.get(member.status, DEFAULT_RING_COLOR)
 
 
 def _draw_avatar_ring(base: Image.Image, center: tuple, radius: int, width: int, color: tuple) -> None:
@@ -332,11 +327,6 @@ async def create_profile_image(cursor, member: discord.Member, guild: discord.Gu
     # обновления member окажется получен через fetch_member, его .status
     # всегда будет offline, а рамка - всегда серой.
     status_source = guild.get_member(member.id) or member
-    if status_source is member and guild.get_member(member.id) is None:
-        logging.warning(
-            f"[status_ring] {member.id} не найден в кэше guild.get_member() — "
-            f"статус будет взят из переданного объекта member (может быть неактуален)."
-        )
 
     try:
         fresh_member = guild.get_member(member.id)
