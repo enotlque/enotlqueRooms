@@ -150,23 +150,19 @@ async def _fetch_circular_avatar(member: discord.abc.User, diameter: int) -> Ima
 
 
 def _get_status_color(member: discord.Member) -> tuple:
-    """Возвращает цвет статуса пользователя в формате RGB"""
     try:
-        status = member.status
-        logging.info(f"DEBUG: Получен статус для {member.display_name}: {status} (тип: {type(status)})")
-        
-        # Проверяем, что статус существует и является валидным
-        if status is None:
-            logging.warning(f"Статус для {member.display_name} равен None")
-            return DEFAULT_RING_COLOR
-            
-        color = STATUS_COLORS.get(status, DEFAULT_RING_COLOR)
-        logging.info(f"DEBUG: Цвет для статуса {status}: {color}")
-        return color
-        
-    except Exception as e:
-        logging.error(f"Ошибка при получении статуса для {member.display_name}: {e}")
-        return DEFAULT_RING_COLOR
+        # Используем raw_status для гарантии
+        status = member.raw_status
+        if status == "online":
+            return (57, 191, 79)
+        elif status == "idle":
+            return (250, 166, 26)
+        elif status == "dnd":
+            return (237, 66, 69)
+        else:
+            return (116, 127, 141)
+    except Exception:
+        return (116, 127, 141)
 
 
 def _draw_avatar_ring(base: Image.Image, center: tuple, radius: int, width: int, color: tuple) -> None:
