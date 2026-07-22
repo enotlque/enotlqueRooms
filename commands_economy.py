@@ -1014,7 +1014,7 @@ async def me(interaction: discord.Interaction, пользователь: discord
     button_menu = ui.Button(
         label="Меню",
         style=discord.ButtonStyle.gray,
-        emoji="<:mice:1526013753110433872>",
+        emoji="<:infor:1337141420305416252>",
         disabled=(пользователь != interaction.user) or not (can_choose_role or can_choose_room)
     )
 
