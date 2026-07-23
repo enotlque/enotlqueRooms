@@ -239,23 +239,21 @@ async def reconcile_deleted_roles(bot):
 
 role_group = app_commands.Group(name="role", description="Управление ролями")
 
-async def check_role_exists(guild, role_name):
-    cursor = common.cursor
-    role = discord.utils.get(guild.roles, name=role_name)
-    if role is None:
-        await cursor.execute("DELETE FROM roles WHERE role_name = $1", role_name)
-        return False
-    return True
-
 def role_existence_check(func):
     @wraps(func)
     async def wrapper(interaction: discord.Interaction, *args, **kwargs):
         cursor = common.cursor
         guild = interaction.guild
-        result = await cursor.execute("SELECT role_name FROM roles")
-        roles = cursor.fetchall()
-        for (role_name,) in roles:
-            await check_role_exists(guild, role_name)
+
+        await cursor.execute("SELECT role_name FROM roles")
+        rows = cursor.fetchall()
+        db_role_names = {row[0] for row in rows}
+        existing_role_names = {role.name for role in guild.roles}
+
+        missing_role_names = list(db_role_names - existing_role_names)
+        if missing_role_names:
+            await cursor.execute("DELETE FROM roles WHERE role_name = ANY($1)", missing_role_names)
+
         return await func(interaction, *args, **kwargs)
     return wrapper
 
