@@ -203,6 +203,9 @@ from commands_room import setup_room_commands
 from commands_staff import setup_staff_commands
 from commands_lobby import setup_lobby_commands
 from commands_activity import setup_activity_tracking
+# commands_economy теперь пакет (папка commands_economy/ с __init__.py),
+# разбитый на common/eco/top/profile/marriage/roles/slots/duel.py —
+# импорты и вызовы ниже не меняются, __init__.py реэкспортирует всё то же самое.
 import commands_economy
 commands_economy.set_cursor(cursor)
 
