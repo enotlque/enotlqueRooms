@@ -246,12 +246,6 @@ async def slots_bet(interaction: discord.Interaction, ставка: int):
             else:
                 win_message = f"<:galochka:1337141373446651955> Выигрыш: **{total_win}** <:wwaluta:1337129761956167751>"
             
-            if wins:
-                lines = []
-                for line_num, win, symbols in wins:
-                    lines.append(f"Линия {line_num}: {''.join(symbols)}")
-                win_message += "\n" + "\n".join(lines)
-            
             embed.add_field(name="Результат", value=win_message)
         else:
             embed.add_field(
