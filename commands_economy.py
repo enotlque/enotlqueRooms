@@ -1716,6 +1716,8 @@ def set_slots_connection_factory(factory):
 # ============================================
 # КОНФИГУРАЦИЯ СЛОТОВ (ОРИГИНАЛЬНЫЕ ЭМОДЗИ)
 # ============================================
+LEFT_ARROW = "<:rightarrow:1337396550204129330>"
+RIGHT_ARROW = "<:leftarrow:1337396538619592744>"
 
 SLOT_SYMBOLS = {
     "<:orangediamond:1295376833688113232>": {"weight": 3, "payouts": {2: 4, 3: 15, 4: 70, 5: 600}, "name": "Алмаз"},
@@ -1874,7 +1876,14 @@ async def slots_bet(interaction: discord.Interaction, ставка: int):
         # Рендер поля 3x5 БЕЗ code-block'а — Discord не рендерит кастомные
         # эмодзи внутри ``` ```, поэтому строку нельзя оборачивать в них.
         def render_field(reel_rows: List[List[str]]) -> str:
-            return "\n".join(" ".join(row) for row in reel_rows)
+            padding = " ㅤㅤ "
+            lines = []
+            for i, row in enumerate(reel_rows):
+                if i == 1:
+                    lines.append(f"{LEFT_ARROW}ㅤ**|** {' **:** '.join(row)} **|**ㅤ{RIGHT_ARROW}")
+                else:
+                    lines.append(f"{padding}**|** {' **|** '.join(row)} **|**{padding}")
+            return "\n \n".join(lines)
 
         # ===== АНИМАЦИЯ ПРОКРУТКИ =====
         SPIN_FRAMES = 3          # сколько промежуточных кадров показать
