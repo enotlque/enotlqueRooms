@@ -465,6 +465,10 @@ class RoleSelectView(View):
         extend_button.callback = self.extend_callback(role_info[0], user_id)
         view.add_item(extend_button)
 
+        delete_button = Button(label="Удалить", style=ButtonStyle.danger, emoji="<:krestic:1337141359286550618>")
+        delete_button.callback = self.delete_callback(role_info, user_id)
+        view.add_item(delete_button)
+
         back_button = Button(label="Назад", style=ButtonStyle.secondary)
         back_button.callback = self.back_callback
         view.add_item(back_button)
@@ -524,6 +528,27 @@ class RoleSelectView(View):
             await interaction.response.send_modal(ExtendRoleModal(role_name, self, user_id))
         return callback
 
+    def delete_callback(self, role_info, user_id):
+        async def callback(interaction: Interaction):
+            if interaction.user.id != user_id:
+                await interaction.response.send_message("У вас нет прав на это действие.", ephemeral=True)
+                return
+
+            role_name = role_info[0]
+
+            confirm_embed = Embed(
+                title="Подтверждение удаления",
+                description=(
+                    f"Вы действительно хотите удалить роль **{role_name}**?\n"
+                    "Это действие необратимо — роль будет удалена с сервера и из базы данных."
+                ),
+                color=0x6e6e6e
+            )
+            confirm_view = RoleDeleteConfirmView(role_info, user_id, self)
+            await interaction.response.edit_message(embed=confirm_embed, view=confirm_view)
+
+        return callback
+
     async def back_callback(self, interaction: Interaction):
         cursor = common.cursor
         if interaction.user.id != self.user.id:
@@ -557,6 +582,61 @@ class RoleSelectView(View):
         updated_view = RoleSelectView(updated_user_roles, self.user, self.guild)
 
         await interaction.response.edit_message(embed=embed, view=updated_view)
+
+class RoleDeleteConfirmView(View):
+    """Второй шаг подтверждения удаления роли (как двухфакторка) — Да/Отмена."""
+
+    def __init__(self, role_info, user_id, parent_view: 'RoleSelectView'):
+        super().__init__(timeout=60)
+        self.role_info = role_info
+        self.user_id = user_id
+        self.parent_view = parent_view
+
+    async def on_timeout(self):
+        # Если пользователь не ответил вовремя — просто оставляем сообщение как есть,
+        # кнопки станут неактивными сами по себе (Discord их задизейблит после timeout).
+        pass
+
+    @discord.ui.button(label="Да, удалить", style=ButtonStyle.danger, emoji="<:checkmark:1526013748718993428>")
+    async def confirm(self, interaction: Interaction, button: Button):
+        cursor = common.cursor
+
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message("У вас нет прав на это действие.", ephemeral=True)
+            return
+
+        role_name = self.role_info[0]
+
+        try:
+            await cursor.execute("DELETE FROM roles WHERE role_name = $1", role_name)
+        except Exception as e:
+            await interaction.response.send_message(f"Не удалось удалить роль из базы данных: {e}", ephemeral=True)
+            return
+
+        discord_role = get(interaction.guild.roles, name=role_name)
+        if discord_role:
+            try:
+                await discord_role.delete(reason=f"Роль удалена владельцем ({interaction.user.id}) через профиль")
+            except Exception as e:
+                print(f"❌ Не удалось удалить роль '{role_name}' на сервере: {e}")
+
+        result_embed = Embed(
+            description=f"<:galochka:1337141373446651955> Роль **{role_name}** удалена.",
+            color=0x6e6e6e
+        )
+        self.stop()
+        await interaction.response.edit_message(embed=result_embed, view=None)
+
+    @discord.ui.button(label="Отмена", style=ButtonStyle.secondary)
+    async def cancel(self, interaction: Interaction, button: Button):
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message("У вас нет прав на это действие.", ephemeral=True)
+            return
+
+        self.stop()
+        embed = self.parent_view.create_role_embed(self.role_info)
+        view = self.parent_view.create_role_view(self.role_info, self.user_id)
+        await interaction.response.edit_message(embed=embed, view=view)
 
 class ExtendRoleModal(Modal):
     def __init__(self, role_name, view, user_id):
