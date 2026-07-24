@@ -24,31 +24,27 @@ from commands_profile import create_profile_image, get_active_role_names, get_me
 from . import common
 from .common import create_embed, format_timedelta, get_user_balance, subtract_user_balance
 
-import discord
-from discord import app_commands, Interaction, Embed, utils, ButtonStyle
-from discord import TextStyle
-from discord.ext import tasks
-import random
-import discord.ui
-from discord.ui import View, Button, Modal, TextInput
-from discord import ui
-from discord.utils import get
-from datetime import datetime, timedelta
-from functools import wraps
-from typing import List, Tuple, Dict, Set
-import re
-import logging
-import traceback
-import asyncio
-import time
-import os
-import io
-from PIL import Image, ImageDraw, ImageFont
-from cache import get_cached, set_cached, delete_cached, balance_cache_key, profile_cache_key, top_cache_key
-from commands_profile import create_profile_image, get_active_role_names, get_member_room_options
-
 from . import common
 from .common import create_embed, format_timedelta, get_user_balance, subtract_user_balance
+
+# ============================================
+# ЗАЩИТА ОТ ГОНКИ ПРИ СОЗДАНИИ РОЛИ
+# ============================================
+# /role create делает несколько последовательных проверок в БД (лимит 2
+# роли на пользователя, уникальность имени+цвета, баланс), а затем несколько
+# сетевых вызовов к Discord (создание роли, позиционирование). Если один и
+# тот же пользователь умудряется вызвать команду дважды почти одновременно
+# (двойной клик, лаг клиента), обе проверки "у вас < 2 ролей" могут пройти
+# по одному и тому же устаревшему значению до того, как первая создаст
+# запись в БД — итог: 3+ роли вместо разрешённых 2. Списание монет уже
+# атомарно защищено на уровне SQL, а вот проверку количества ролей защищаем
+# простым process-local локом на пользователя (тот же приём, что уже
+# используется в slots.py/duel.py для защиты от параллельных игр).
+# Общий лок для всех операций, увеличивающих счётчик ролей пользователя
+# (создание новой роли и приём подаренной) — без него /role create и
+# принятие подарка могли бы одновременно пройти проверку "меньше 2 ролей"
+# по одному и тому же устаревшему значению.
+_role_slot_locked_users: Set[int] = set()
 
 # ============================================
 # АВТОУДАЛЕНИЕ ИСТЁКШИХ РОЛЕЙ
@@ -268,6 +264,17 @@ async def create(interaction: discord.Interaction, название: str, цве
     cursor = common.cursor
     await interaction.response.defer(ephemeral=True)
 
+    if interaction.user.id in _role_slot_locked_users:
+        await interaction.followup.send("Дождитесь завершения предыдущего создания роли.", ephemeral=True)
+        return
+    _role_slot_locked_users.add(interaction.user.id)
+    try:
+        await _create_role_impl(interaction, название, цвет, cursor)
+    finally:
+        _role_slot_locked_users.discard(interaction.user.id)
+
+
+async def _create_role_impl(interaction: discord.Interaction, название: str, цвет: str, cursor):
     if len(название) > 20:
         error_embed = discord.Embed(
             description="### <:xx:1295095667617960018> Максимальное количество символов в названии: `20`",
@@ -291,9 +298,11 @@ async def create(interaction: discord.Interaction, название: str, цве
         await interaction.followup.send("Роль с таким названием и цветом уже существует. Название и цвет не могут совпадать одновременно.", ephemeral=True)
         return
 
-    result = await cursor.execute("SELECT balance FROM user_profiles WHERE user_id = $1", interaction.user.id)
-    user_profile = cursor.fetchone()
-    if not user_profile or user_profile[0] < 1250:
+    await cursor.execute(
+        "UPDATE user_profiles SET balance = balance - 1250 WHERE user_id = $1 AND balance >= 1250 RETURNING balance",
+        interaction.user.id
+    )
+    if cursor.fetchone() is None:
         await interaction.followup.send("У вас недостаточно средств для создания роли. Требуется 1250 монет.", ephemeral=True)
         return
 
@@ -301,6 +310,7 @@ async def create(interaction: discord.Interaction, название: str, цве
     
     reference_role = guild.get_role(POSITION_UNDER_ROLE_ID)
     if not reference_role:
+        await cursor.execute("UPDATE user_profiles SET balance = balance + 1250 WHERE user_id = $1", interaction.user.id)
         await interaction.followup.send("Не удалось найти роль для позиционирования.", ephemeral=True)
         return
         
@@ -311,15 +321,15 @@ async def create(interaction: discord.Interaction, название: str, цве
         positions[role] = reference_role.position
         await guild.edit_role_positions(positions)
     except discord.Forbidden:
+        await cursor.execute("UPDATE user_profiles SET balance = balance + 1250 WHERE user_id = $1", interaction.user.id)
         await interaction.followup.send("У бота недостаточно прав для изменения позиции роли.", ephemeral=True)
         return
     except Exception as e:
+        await cursor.execute("UPDATE user_profiles SET balance = balance + 1250 WHERE user_id = $1", interaction.user.id)
         await interaction.followup.send(f"Произошла ошибка при установке позиции роли: {str(e)}", ephemeral=True)
         return
 
     await interaction.user.add_roles(role)
-
-    await cursor.execute("UPDATE user_profiles SET balance = balance - 1250 WHERE user_id = $1", interaction.user.id)
 
     creation_date = datetime.now()
     expiration_date = creation_date + timedelta(days=30)
@@ -1042,22 +1052,38 @@ class RoleGiveAcceptView(ui.View):
             await interaction.response.send_message("Это предложение уже обработано.", ephemeral=True)
             return
 
-        if self.сумма > 0:
-            result = await cursor.execute("SELECT balance FROM user_profiles WHERE user_id = $1", self.получатель.id)
-            receiver_balance = cursor.fetchone()
-            if not receiver_balance or receiver_balance[0] < self.сумма:
-                await interaction.response.send_message("У вас недостаточно монет для покупки этой роли.", ephemeral=True)
+        if self.получатель.id in _role_slot_locked_users:
+            await interaction.response.send_message("Дождитесь завершения предыдущей операции с ролями.", ephemeral=True)
+            return
+        _role_slot_locked_users.add(self.получатель.id)
+        try:
+            # Повторная проверка лимита в 2 роли: с момента отправки
+            # предложения (до 60 секунд) получатель мог создать свою роль
+            # или принять другой подарок.
+            result = await cursor.execute("SELECT COUNT(*) FROM roles WHERE id_owner_now = $1", self.получатель.id)
+            if cursor.fetchone()[0] >= 2:
+                await interaction.response.send_message("У вас уже есть 2 роли, принять ещё одну нельзя.", ephemeral=True)
                 return
 
-        self.resolved = True
-        self.stop()
+            if self.сумма > 0:
+                await cursor.execute(
+                    "UPDATE user_profiles SET balance = balance - $1 WHERE user_id = $2 AND balance >= $1 RETURNING balance",
+                    self.сумма, self.получатель.id
+                )
+                if cursor.fetchone() is None:
+                    await interaction.response.send_message("У вас недостаточно монет для покупки этой роли.", ephemeral=True)
+                    return
 
-        await cursor.execute("UPDATE roles SET id_owner_now = $1 WHERE role_name = $2", self.получатель.id, self.role_name)
-        await self.получатель.add_roles(self.role_obj)
+            self.resolved = True
+            self.stop()
 
-        if self.сумма > 0:
-            await cursor.execute("UPDATE user_profiles SET balance = balance - $1 WHERE user_id = $2", self.сумма, self.получатель.id)
-            await cursor.execute("UPDATE user_profiles SET balance = balance + $1 WHERE user_id = $2", self.сумма, self.sender.id)
+            await cursor.execute("UPDATE roles SET id_owner_now = $1 WHERE role_name = $2", self.получатель.id, self.role_name)
+            await self.получатель.add_roles(self.role_obj)
+
+            if self.сумма > 0:
+                await cursor.execute("UPDATE user_profiles SET balance = balance + $1 WHERE user_id = $2", self.сумма, self.sender.id)
+        finally:
+            _role_slot_locked_users.discard(self.получатель.id)
 
         success_embed = discord.Embed(
             description=f"Роль {self.role_obj.mention} успешно передана пользователю {self.получатель.mention}",
