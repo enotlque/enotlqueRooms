@@ -259,8 +259,19 @@ async def take(interaction: discord.Interaction, пользователь: disco
         ), ephemeral=True)
         return
 
-    new_balance = user_balance[0] - сумма
-    await cursor.execute('UPDATE user_profiles SET balance = balance - $1 WHERE user_id = $2', сумма, пользователь.id)
+    await cursor.execute(
+        'UPDATE user_profiles SET balance = balance - $1 WHERE user_id = $2 AND balance >= $1 RETURNING balance',
+        сумма, пользователь.id
+    )
+    updated_row = cursor.fetchone()
+    if updated_row is None:
+        await interaction.response.send_message(embed=create_embed(
+            description="У пользователя недостаточно средств (баланс изменился, попробуйте ещё раз).",
+            color="#696969"
+        ), ephemeral=True)
+        return
+
+    new_balance = updated_row[0]
 
     from cache import set_cached, delete_cached, balance_cache_key, profile_cache_key
     await set_cached(balance_cache_key(пользователь.id), new_balance, 60)
@@ -308,10 +319,24 @@ async def transfer(interaction: discord.Interaction, пользователь: d
         commission = int(сумма * 0.1)
         total_amount = сумма - commission
 
+        await cursor.execute(
+            'UPDATE user_profiles SET balance = balance - $1 WHERE user_id = $2 AND balance >= $1 RETURNING balance',
+            сумма, interaction.user.id
+        )
+        debited_row = cursor.fetchone()
+
+        if debited_row is None:
+            await interaction.response.send_message(embed=create_embed(
+                description="Недостаточно средств для перевода (баланс изменился, попробуйте ещё раз).",
+                color="#696969"
+            ), ephemeral=True)
+            return
+
+        sender_new_balance = debited_row[0]
+
         result = await cursor.execute('SELECT balance FROM user_profiles WHERE user_id = $1', пользователь.id)
         recipient_balance = cursor.fetchone()
 
-        await cursor.execute('UPDATE user_profiles SET balance = balance - $1 WHERE user_id = $2', сумма, interaction.user.id)
         if recipient_balance:
             await cursor.execute('UPDATE user_profiles SET balance = balance + $1 WHERE user_id = $2', total_amount, пользователь.id)
         else:
@@ -319,7 +344,7 @@ async def transfer(interaction: discord.Interaction, пользователь: d
 
         # ⬇️⬇️⬇️ ЭТИ СТРОЧКИ ДОБАВИТЬ ⬇️⬇️⬇️
         from cache import set_cached, delete_cached, balance_cache_key, profile_cache_key
-        await set_cached(balance_cache_key(interaction.user.id), sender_balance[0] - сумма, 60)
+        await set_cached(balance_cache_key(interaction.user.id), sender_new_balance, 60)
         await set_cached(balance_cache_key(пользователь.id), (recipient_balance[0] if recipient_balance else 0) + total_amount, 60)
         await delete_cached(profile_cache_key(interaction.user.id))
         await delete_cached(profile_cache_key(пользователь.id))
@@ -335,4 +360,3 @@ async def transfer(interaction: discord.Interaction, пользователь: d
             description="Недостаточно средств для перевода.",
             color="#696969"
         ), ephemeral=True)
-
