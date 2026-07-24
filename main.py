@@ -162,43 +162,65 @@ async def release_db_connection(conn):
     await db_pool.release(conn)
 
 # === ОБЁРТКА ДЛЯ БАЗЫ ДАННЫХ ===
+#
+# ИСПРАВЛЕНО (главное бутылочное горлышко бота):
+# Старая PgWrapper лениво брала ОДНО соединение (self._conn) и держала его
+# вечно — весь бот, независимо от размера пула (min_size=3, max_size=20),
+# реально ходил в базу через один и тот же физический коннект. Все команды
+# экономики/ролей/браков/комнат/активности стояли в очередь друг за другом
+# на этом единственном соединении, даже если пул мог отдать 20 параллельных.
+#
+# Плюс last_result хранился в self, то есть был ОБЩИЙ на все одновременно
+# выполняющиеся команды: если два человека одновременно жали кнопки,
+# execute() одной команды мог перезаписать last_result до того, как другая
+# успевала прочитать его через fetchone()/fetchall() — гонка данных.
+#
+# Теперь: каждый execute() берёт своё соединение из пула на время ОДНОГО
+# запроса и сразу возвращает обратно (async with pool.acquire()), а
+# last_result хранится в contextvars.ContextVar, который изолирован для
+# каждой asyncio.Task (discord.py выполняет каждый interaction/callback в
+# своей Task) — гонка исключена. Внешний API (execute -> fetchone/fetchall)
+# не поменялся, поэтому ни один из command-файлов (eco/roles/marriage/
+# rooms/profile/top/...) правок не требует.
+import contextvars
+
+_last_result_var: contextvars.ContextVar = contextvars.ContextVar('pg_last_result', default=None)
+
+
 class PgWrapper:
-    def __init__(self):
-        self.last_result = None
-        self._conn = None
-    
-    async def _get_conn(self):
-        if self._conn is None:
-            self._conn = await get_db_connection()
-        return self._conn
-    
+    def __init__(self, pool_getter):
+        self._pool_getter = pool_getter
+
     async def execute(self, query, *args):
-        conn = await self._get_conn()
-        try:
+        pool = self._pool_getter()
+        if pool is None:
+            raise RuntimeError("db_pool ещё не инициализирован (execute вызван до on_ready/init_db_pool)")
+
+        async with pool.acquire() as conn:
             if query.strip().upper().startswith('SELECT'):
                 result = await conn.fetch(query, *args)
-                self.last_result = result
-                return result
             else:
                 result = await conn.execute(query, *args)
-                self.last_result = result
-                return result
-        except Exception as e:
-            if self._conn:
-                await release_db_connection(self._conn)
-                self._conn = None
-            raise e
-    
+
+        _last_result_var.set(result)
+        return result
+
     def fetchone(self):
-        if self.last_result and len(self.last_result) > 0:
-            return self.last_result[0]
+        result = _last_result_var.get()
+        if result and len(result) > 0:
+            return result[0]
         return None
-    
+
     def fetchall(self):
-        return self.last_result if self.last_result else []
+        result = _last_result_var.get()
+        return result if result else []
 
 
-cursor = PgWrapper()
+def _get_pool():
+    return db_pool
+
+
+cursor = PgWrapper(_get_pool)
 conn = cursor
 
 # === ИМПОРТ МОДУЛЕЙ ===
@@ -212,7 +234,7 @@ from commands_activity import setup_activity_tracking
 import commands_economy
 commands_economy.set_cursor(cursor)
 
-commands_economy.set_slots_connection_factory(get_db_connection)
+commands_economy.set_slots_connection_factory(get_db_connection, release_db_connection)
 
 from commands_economy import (
     eco_group,
@@ -242,7 +264,7 @@ bot.tree.add_command(duel)
 setup_room_commands(bot, cursor, CATEGORY_ID, restricted_role_id)
 setup_staff_commands(bot, cursor)
 setup_lobby_commands(bot, cursor)
-setup_activity_tracking(bot, cursor, get_db_connection)
+setup_activity_tracking(bot, cursor, get_db_connection, release_db_connection)
 setup_role_delete_listener(bot)
 
 
