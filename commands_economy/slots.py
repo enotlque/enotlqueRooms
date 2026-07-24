@@ -32,11 +32,27 @@ from .common import create_embed, format_timedelta, get_user_balance, subtract_u
 slots_group = app_commands.Group(name="slots", description="Команды для игры в слоты")
 
 _get_connection = None
+_release_connection = None
 
-def set_slots_connection_factory(factory):
-    """Устанавливает фабрику соединений для слотов"""
-    global _get_connection
+def set_slots_connection_factory(factory, release_factory=None):
+    """Устанавливает фабрику соединений для слотов.
+
+    release_factory обязателен для корректной работы пула: раньше здесь
+    вызывался conn.close(), что для соединения, взятого через
+    pool.acquire(), реально РАЗРЫВАЕТ TCP-соединение с базой вместо того,
+    чтобы вернуть его в пул — на каждый спин бот заново переподключался
+    к PostgreSQL (лишний RTT + handshake), а не переиспользовал одно из
+    20 уже открытых соединений."""
+    global _get_connection, _release_connection
     _get_connection = factory
+    _release_connection = release_factory
+
+
+async def _release(conn):
+    if _release_connection is not None:
+        await _release_connection(conn)
+    else:
+        await conn.close()
 
 # ============================================
 # КОНФИГУРАЦИЯ СЛОТОВ (ОРИГИНАЛЬНЫЕ ЭМОДЗИ)
@@ -126,7 +142,7 @@ async def get_balance_cached(user_id: int) -> int:
         row = await conn.fetchrow('SELECT balance FROM user_profiles WHERE user_id = $1', user_id)
         balance = row[0] if row else 0
     finally:
-        await conn.close()
+        await _release(conn)
     
     await set_cached(balance_cache_key(user_id), balance, 5)
     return balance
@@ -140,7 +156,7 @@ async def update_balance(user_id: int, new_balance: int):
             new_balance, user_id
         )
     finally:
-        await conn.close()
+        await _release(conn)
     
     await delete_cached(balance_cache_key(user_id))
 
