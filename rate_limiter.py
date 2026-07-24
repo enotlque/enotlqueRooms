@@ -30,11 +30,19 @@ class RateLimiter:
 # Глобальный экземпляр
 rate_limiter = RateLimiter(max_requests=10, per_seconds=1)
 
-async def safe_discord_call(coro, retries=3):
+async def safe_discord_call(coro_func, retries=3):
+    """coro_func — вызываемый без аргументов объект, возвращающий НОВУЮ корутину
+    при каждом вызове, например: lambda: channel.send("привет").
+    Раньше сюда передавали уже созданную корутину напрямую (safe_discord_call(x.send(...)))
+    — это работало только на первой попытке: при 429 и повторном заходе в цикл
+    `await coro` падал с RuntimeError, так как одну и ту же корутину нельзя
+    авызвать дважды. Функция сейчас нигде в проекте не вызывается, поэтому
+    баг был "спящим", но чинить его нужно было именно так, а не патчем поверх
+    старого API."""
     for attempt in range(retries):
         await rate_limiter.acquire()
         try:
-            return await coro
+            return await coro_func()
         except HTTPException as e:
             if e.status == 429 and attempt < retries - 1:
                 wait = e.retry_after or 5
