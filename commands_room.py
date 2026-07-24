@@ -110,21 +110,33 @@ def start_room_expiry_task(bot, cursor):
                 role = guild.get_role(role_id) if role_id else None
                 if role:
                     try:
-                        await role.delete(reason="Автоматическое удаление: истёк срок действия комнаты")
+                        await safe_discord_call(
+                            lambda: role.delete(
+                                reason="Автоматическое удаление: истёк срок действия комнаты"
+                            )
+                        )
                     except Exception as e:
                         print(f"❌ Не удалось удалить роль комнаты '{room_name}': {e}")
 
                 text_channel = guild.get_channel(text_channel_id) if text_channel_id else None
                 if text_channel:
                     try:
-                        await text_channel.delete(reason="Автоматическое удаление: истёк срок действия комнаты")
+                        await safe_discord_call(
+                            lambda: text_channel.delete(
+                                reason="Автоматическое удаление: истёк срок действия комнаты"
+                            )
+                        )
                     except Exception:
                         pass
 
                 voice_channel = guild.get_channel(voice_channel_id) if voice_channel_id else None
                 if voice_channel:
                     try:
-                        await voice_channel.delete(reason="Автоматическое удаление: истёк срок действия комнаты")
+                        await safe_discord_call(
+                            lambda: voice_channel.delete(
+                                reason="Автоматическое удаление: истёк срок действия комнаты"
+                            )
+                        )
                     except Exception:
                         pass
 
@@ -365,7 +377,7 @@ def setup_room_commands(bot, cursor, CATEGORY_ID, restricted_role_id):
         ''', участник.id, комната, role.id, text_channel.id, voice_channel.id, creation_date_str, expiration_date_str, 0)
 
         # Выдача роли пользователю
-        await участник.add_roles(role)
+        await safe_discord_call(lambda: участник.add_roles(role))
 
         success_embed = Embed(
             description=f"Вы успешно создали комнату на `{ROOM_CREATE_DAYS} д`",
@@ -594,7 +606,7 @@ def setup_room_commands(bot, cursor, CATEGORY_ID, restricted_role_id):
         role = guild.get_role(role_id)
         if role:
             try:
-                await role.delete()
+                await safe_discord_call(lambda: role.delete())
             except discord.errors.HTTPException as e:
                 await interaction.response.send_message(
                     embed=discord.Embed(
@@ -607,7 +619,7 @@ def setup_room_commands(bot, cursor, CATEGORY_ID, restricted_role_id):
         text_channel = guild.get_channel(text_channel_id)
         if text_channel:
             try:
-                await text_channel.delete()
+                await safe_discord_call(lambda: text_channel.delete())
             except discord.errors.HTTPException as e:
                 await interaction.response.send_message(
                     embed=discord.Embed(
@@ -620,7 +632,7 @@ def setup_room_commands(bot, cursor, CATEGORY_ID, restricted_role_id):
         voice_channel = guild.get_channel(voice_channel_id)
         if voice_channel:
             try:
-                await voice_channel.delete()
+                await safe_discord_call(lambda: voice_channel.delete())
             except discord.errors.HTTPException as e:
                 await interaction.response.send_message(
                     embed=discord.Embed(
@@ -913,13 +925,17 @@ def setup_room_commands(bot, cursor, CATEGORY_ID, restricted_role_id):
 
             if role:
                 try:
-                    await role.delete(reason=f"Комната удалена владельцем ({interaction.user.id}) через панель управления")
+                    await safe_discord_call(
+                    lambda: role.delete(
+                        reason=f"Комната удалена владельцем ({interaction.user.id}) через панель управления"
+                    )
+                )
                 except Exception as e:
                     print(f"❌ Не удалось удалить роль комнаты '{room_name}': {e}")
 
             if self.parent_view.voice_channel:
                 try:
-                    await self.parent_view.voice_channel.delete()
+                    await safe_discord_call(lambda: self.parent_view.voice_channel.delete())
                 except Exception:
                     pass
 
@@ -1009,7 +1025,7 @@ def setup_room_commands(bot, cursor, CATEGORY_ID, restricted_role_id):
 
             if role and role not in self.new_member.roles:
                 try:
-                    await self.new_member.add_roles(role)
+                    await safe_discord_call(lambda: self.new_member.add_roles(role))
                 except Exception:
                     pass
 
@@ -1592,7 +1608,7 @@ def setup_room_commands(bot, cursor, CATEGORY_ID, restricted_role_id):
                     continue
 
                 try:
-                    await member.remove_roles(role)
+                    await safe_discord_call(lambda: member.remove_roles(role))
                     removed.append(member.mention)
                     parent_view.member_count = max(0, parent_view.member_count - 1)
                 except Exception:
@@ -1632,7 +1648,7 @@ def setup_room_commands(bot, cursor, CATEGORY_ID, restricted_role_id):
             # Удаляем сообщение после таймаута
             if self.message:
                 try:
-                    await self.message.delete()
+                    await safe_discord_call(lambda: self.message.delete())
                 except:
                     pass
 
@@ -1651,7 +1667,7 @@ def setup_room_commands(bot, cursor, CATEGORY_ID, restricted_role_id):
                 self.pending_set.discard(self.member.id)
 
             # Выдаем роль
-            await self.member.add_roles(self.role)
+            await safe_discord_call(lambda: self.member.add_roles(self.role))
             
             # Обновляем счетчик участников
             self.parent_view.member_count += 1
@@ -1666,7 +1682,7 @@ def setup_room_commands(bot, cursor, CATEGORY_ID, restricted_role_id):
             
             # Удаляем сообщение с приглашением
             try:
-                await interaction.message.delete()
+                await safe_discord_call(lambda: interaction.message.delete())
             except:
                 pass
 
@@ -1707,7 +1723,7 @@ def setup_room_commands(bot, cursor, CATEGORY_ID, restricted_role_id):
             # Удаляем сообщение через 3 секунды
             await asyncio.sleep(3)
             try:
-                await interaction.message.delete()
+                await safe_discord_call(lambda: interaction.message.delete())
             except:
                 pass
 
