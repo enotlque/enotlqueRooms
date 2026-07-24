@@ -615,15 +615,9 @@ def setup_room_commands(bot, cursor, CATEGORY_ID, restricted_role_id):
 
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    async def build_owner_room_embed(owner, room_name, member_count):
-        """Строит embed управления комнатой владельцем: даты, банк, участники."""
-        await cursor.execute(
-            'SELECT creation_date, expiration_date, room_balance FROM room_leadership WHERE leader_id = $1',
-            owner.id
-        )
-        row = cursor.fetchone()
-        creation_date, expiration_date, room_balance = row if row else (None, None, 0)
-
+    def format_owner_room_embed(owner, room_name, member_count, creation_date, expiration_date, room_balance):
+        """Чистый форматтер без обращения к БД — используется и при первой загрузке,
+        и при возврате назад/отмене, когда данные уже закэшированы на view."""
         if expiration_date:
             try:
                 expiration = datetime.strptime(expiration_date, ROOM_DATE_FORMAT)
@@ -645,18 +639,32 @@ def setup_room_commands(bot, cursor, CATEGORY_ID, restricted_role_id):
 
         return embed
 
+    async def fetch_owner_room_embed(owner, room_name, member_count):
+        """Идёт в БД за свежими данными — использовать только когда данные могли измениться
+        (после продления/пополнения банка), а не при каждой перерисовке панели."""
+        await cursor.execute(
+            'SELECT creation_date, expiration_date, room_balance FROM room_leadership WHERE leader_id = $1',
+            owner.id
+        )
+        row = cursor.fetchone()
+        creation_date, expiration_date, room_balance = row if row else (None, None, 0)
+        return format_owner_room_embed(owner, room_name, member_count, creation_date, expiration_date, room_balance), (creation_date, expiration_date, room_balance)
+
     @room_group.command(name="manage", description="Управление личной комнатой")
     async def introom(interaction: discord.Interaction):
         user = interaction.user
         guild = interaction.guild
 
-        await cursor.execute('SELECT room_name, role_id, creation_date, voice_channel_id FROM room_leadership WHERE leader_id = $1', user.id)
+        await cursor.execute(
+            'SELECT room_name, role_id, creation_date, voice_channel_id, expiration_date, room_balance FROM room_leadership WHERE leader_id = $1',
+            user.id
+        )
         result = cursor.fetchone()
         if result is None:
             await interaction.response.send_message(embed=Embed(description="У вас нет своей комнаты для управления.", color=0xFF0000), ephemeral=True)
             return
 
-        room_name, role_id, creation_date, voice_channel_id = result
+        room_name, role_id, creation_date, voice_channel_id, expiration_date, room_balance = result
         role = guild.get_role(role_id)
         voice_channel = guild.get_channel(voice_channel_id) if voice_channel_id else None
 
@@ -667,7 +675,7 @@ def setup_room_commands(bot, cursor, CATEGORY_ID, restricted_role_id):
         member_count = sum(1 for member in guild.members if role in member.roles)
         is_channel_open = voice_channel and voice_channel.permissions_for(guild.default_role).connect
 
-        embed = await build_owner_room_embed(user, room_name, member_count)
+        embed = format_owner_room_embed(user, room_name, member_count, creation_date, expiration_date, room_balance)
 
         view = InitialView(
             owner_role_id=role_id,
@@ -676,14 +684,18 @@ def setup_room_commands(bot, cursor, CATEGORY_ID, restricted_role_id):
             member_count=member_count,
             voice_channel=voice_channel,
             is_channel_open=is_channel_open,
-            interaction=interaction
+            interaction=interaction,
+            creation_date=creation_date,
+            expiration_date=expiration_date,
+            room_balance=room_balance
         )
 
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
         view.original_message = await interaction.original_response()
 
     class InitialView(View):
-        def __init__(self, owner_role_id, owner, room_name, member_count, voice_channel, is_channel_open, interaction):
+        def __init__(self, owner_role_id, owner, room_name, member_count, voice_channel, is_channel_open, interaction,
+                     creation_date=None, expiration_date=None, room_balance=0):
             super().__init__()
             self.owner_role_id = owner_role_id
             self.owner = owner
@@ -693,16 +705,24 @@ def setup_room_commands(bot, cursor, CATEGORY_ID, restricted_role_id):
             self.is_channel_open = is_channel_open
             self.interaction = interaction
             self.original_message = None
-            
+            self.creation_date = creation_date
+            self.expiration_date = expiration_date
+            self.room_balance = room_balance
+
             self.add_item(ManageButton(self))
             self.add_item(ExtendRoomButton(self))
             self.add_item(BankDepositButton(self))
             self.add_item(TransferOwnershipButton(self))
             self.add_item(DeleteRoomButton(self))
 
+        def cached_embed(self):
+            """Без похода в БД — для навигации назад/отмены, когда данные не менялись."""
+            return format_owner_room_embed(self.owner, self.room_name, self.member_count, self.creation_date, self.expiration_date, self.room_balance)
+
         async def refresh(self, interaction: Interaction):
-            """Перестраивает embed панели владельца после продления/пополнения банка."""
-            embed = await build_owner_room_embed(self.owner, self.room_name, self.member_count)
+            """Перестраивает embed панели владельца ПОСЛЕ реального изменения данных
+            (продление/пополнение банка) — единственное место, где нужен свежий SELECT."""
+            embed, (self.creation_date, self.expiration_date, self.room_balance) = await fetch_owner_room_embed(self.owner, self.room_name, self.member_count)
             if interaction.message is not None:
                 await interaction.followup.edit_message(message_id=interaction.message.id, embed=embed, view=self)
 
@@ -756,10 +776,13 @@ def setup_room_commands(bot, cursor, CATEGORY_ID, restricted_role_id):
                 member_count=self.parent_view.member_count,
                 voice_channel=self.parent_view.voice_channel,
                 is_channel_open=self.parent_view.is_channel_open,
-                interaction=interaction
+                interaction=interaction,
+                creation_date=self.parent_view.creation_date,
+                expiration_date=self.parent_view.expiration_date,
+                room_balance=self.parent_view.room_balance
             )
 
-            embed = await build_owner_room_embed(self.parent_view.owner, self.parent_view.room_name, self.parent_view.member_count)
+            embed = new_view.cached_embed()
 
             await interaction.response.edit_message(embed=embed, view=new_view)
             new_view.original_message = await interaction.original_response()
@@ -883,7 +906,7 @@ def setup_room_commands(bot, cursor, CATEGORY_ID, restricted_role_id):
                 return
 
             self.stop()
-            embed = await build_owner_room_embed(self.parent_view.owner, self.parent_view.room_name, self.parent_view.member_count)
+            embed = self.parent_view.cached_embed()
             await interaction.response.edit_message(embed=embed, view=self.parent_view)
 
     class TransferSelectView(View):
@@ -1677,14 +1700,8 @@ def setup_room_commands(bot, cursor, CATEGORY_ID, restricted_role_id):
     # /room extend — ПАНЕЛЬ УЧАСТНИКА КОМНАТЫ
     # ============================================
 
-    async def build_member_room_embed(leader_id, room_name):
-        await cursor.execute(
-            'SELECT creation_date, expiration_date, room_balance FROM room_leadership WHERE leader_id = $1',
-            leader_id
-        )
-        row = cursor.fetchone()
-        creation_date, expiration_date, room_balance = row if row else (None, None, 0)
-
+    def format_member_room_embed(room_name, creation_date, expiration_date, room_balance):
+        """Чистый форматтер без обращения к БД."""
         if expiration_date:
             try:
                 expiration = datetime.strptime(expiration_date, ROOM_DATE_FORMAT)
@@ -1702,11 +1719,24 @@ def setup_room_commands(bot, cursor, CATEGORY_ID, restricted_role_id):
         embed.set_footer(text=f"Продление: {ROOM_EXTEND_DAY_COST} монет/день")
         return embed
 
+    async def fetch_member_room_embed(leader_id, room_name):
+        """Идёт в БД за свежими данными — только когда данные могли измениться (после действия)."""
+        await cursor.execute(
+            'SELECT creation_date, expiration_date, room_balance FROM room_leadership WHERE leader_id = $1',
+            leader_id
+        )
+        row = cursor.fetchone()
+        creation_date, expiration_date, room_balance = row if row else (None, None, 0)
+        return format_member_room_embed(room_name, creation_date, expiration_date, room_balance), (creation_date, expiration_date, room_balance)
+
     class MemberRoomView(View):
-        def __init__(self, leader_id, room_name):
+        def __init__(self, leader_id, room_name, creation_date=None, expiration_date=None, room_balance=0):
             super().__init__(timeout=120)
             self.leader_id = leader_id
             self.room_name = room_name
+            self.creation_date = creation_date
+            self.expiration_date = expiration_date
+            self.room_balance = room_balance
 
             extend_button = Button(label="Продлить", style=ButtonStyle.secondary, emoji="<:beskone4:1337141486512242868>")
             extend_button.callback = self.extend_callback
@@ -1716,8 +1746,11 @@ def setup_room_commands(bot, cursor, CATEGORY_ID, restricted_role_id):
             bank_button.callback = self.bank_callback
             self.add_item(bank_button)
 
+        def cached_embed(self):
+            return format_member_room_embed(self.room_name, self.creation_date, self.expiration_date, self.room_balance)
+
         async def refresh(self, interaction: Interaction):
-            embed = await build_member_room_embed(self.leader_id, self.room_name)
+            embed, (self.creation_date, self.expiration_date, self.room_balance) = await fetch_member_room_embed(self.leader_id, self.room_name)
             if interaction.message is not None:
                 await interaction.followup.edit_message(message_id=interaction.message.id, embed=embed, view=self)
 
@@ -1738,17 +1771,20 @@ def setup_room_commands(bot, cursor, CATEGORY_ID, restricted_role_id):
         def __init__(self, rooms: list):
             options = [
                 discord.SelectOption(label=room_name, value=str(leader_id))
-                for leader_id, room_name, role_id in rooms[:25]
+                for leader_id, room_name, role_id, creation_date, expiration_date, room_balance in rooms[:25]
             ]
             super().__init__(placeholder="Выберите комнату", min_values=1, max_values=1, options=options)
-            self.rooms_by_leader = {str(leader_id): room_name for leader_id, room_name, role_id in rooms}
+            self.rooms_by_leader = {
+                str(leader_id): (room_name, creation_date, expiration_date, room_balance)
+                for leader_id, room_name, role_id, creation_date, expiration_date, room_balance in rooms
+            }
 
         async def callback(self, interaction: Interaction):
             leader_id = int(self.values[0])
-            room_name = self.rooms_by_leader[self.values[0]]
+            room_name, creation_date, expiration_date, room_balance = self.rooms_by_leader[self.values[0]]
 
-            embed = await build_member_room_embed(leader_id, room_name)
-            view = MemberRoomView(leader_id, room_name)
+            view = MemberRoomView(leader_id, room_name, creation_date, expiration_date, room_balance)
+            embed = view.cached_embed()
             await interaction.response.edit_message(embed=embed, view=view)
 
     @room_group.command(name="extend", description="Продлить или пополнить банк комнаты, в которой вы участник")
@@ -1763,7 +1799,10 @@ def setup_room_commands(bot, cursor, CATEGORY_ID, restricted_role_id):
             )
             return
 
-        await cursor.execute('SELECT leader_id, room_name, role_id FROM room_leadership WHERE role_id = ANY($1)', user_role_ids)
+        await cursor.execute(
+            'SELECT leader_id, room_name, role_id, creation_date, expiration_date, room_balance FROM room_leadership WHERE role_id = ANY($1)',
+            user_role_ids
+        )
         rows = cursor.fetchall()
 
         if not rows:
@@ -1774,9 +1813,9 @@ def setup_room_commands(bot, cursor, CATEGORY_ID, restricted_role_id):
             return
 
         if len(rows) == 1:
-            leader_id, room_name, role_id = rows[0]
-            embed = await build_member_room_embed(leader_id, room_name)
-            view = MemberRoomView(leader_id, room_name)
+            leader_id, room_name, role_id, creation_date, expiration_date, room_balance = rows[0]
+            view = MemberRoomView(leader_id, room_name, creation_date, expiration_date, room_balance)
+            embed = view.cached_embed()
             await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
             return
 
