@@ -1,4 +1,5 @@
 import discord
+import asyncio
 from discord import app_commands, Interaction, Embed, ButtonStyle
 from discord.ui import View, Button, Select, Modal, TextInput
 from discord.ext import tasks
@@ -9,25 +10,27 @@ from rate_limiter import safe_discord_call
 # ============================================
 # СИСТЕМА ПРИВАТНЫХ ВРЕМЕННЫХ КОМНАТ (join-to-create)
 # ============================================
-#
-# /vremcomnata (админ) выбирает категорию -> бот создаёт в ней:
-#   - голосовой канал-триггер "┗➕ ◦ Создать" (зашёл -> тебе создали свою комнату)
-#   - текстовый канал "┍⚙️・настройка" с ОДНИМ persistent-сообщением-панелью
-#
-# Панель persistent (custom_id + timeout=None + bot.add_view при старте) —
-# она не привязана к конкретной комнате: при нажатии кнопки бот смотрит,
-# у кого из нажавших есть активная комната в БД (temp_rooms) и работает с ней.
-# Поэтому сообщение с кнопками "всегда актуально" и переживает рестарт бота.
-#
-# Когда голосовой канал комнаты пустеет (включая выход лидера) — комната
-# удаляется физически и из БД. Фоновая задача раз в 10 минут подчищает
-# осиротевшие комнаты (если события были пропущены из-за даунтайма бота).
 
 CREATE_CHANNEL_NAME = "┗➕ ◦ Создать"
 SETTINGS_CHANNEL_NAME = "┍⚙️・настройка"
-DEFAULT_ROOM_LIMIT = 2
+TRIGGER_CHANNEL_LIMIT = 2       # лимит у самого канала-триггера "Создать"
+DEFAULT_ROOM_LIMIT = 0          # 0 = без ограничений — лимит личной комнаты по умолчанию
 RENAME_COOLDOWN_MINUTES = 10
 DATE_FORMAT = "%d.%m.%Y %H:%M:%S"
+
+# --- Кэш конфига системы temp_rooms по guild_id (экономит запросы к БД) ---
+_config_cache = {}
+
+# --- Локи на создание/удаление комнаты (ключ — произвольный, с префиксом) ---
+_locks = {}
+
+
+def _get_lock(key):
+    lock = _locks.get(key)
+    if lock is None:
+        lock = asyncio.Lock()
+        _locks[key] = lock
+    return lock
 
 ConfigRow = namedtuple('ConfigRow', 'guild_id category_id create_channel_id settings_channel_id panel_message_id')
 RoomRow = namedtuple('RoomRow', 'voice_channel_id guild_id owner_id user_limit is_locked is_hidden created_at last_rename')
@@ -47,9 +50,7 @@ PANEL_EMBED_DESCRIPTION = (
     "✅ — Выдать доступ\n\n"
     "✏️ — Сменить название\n"
     "👑 — Передать владельца\n"
-    "👢 — Выгнать из комнаты\n"
-    "🔇 — Забрать право говорить\n"
-    "🔊 — Вернуть право говорить\n\n"
+    "👢 — Выгнать из комнаты\n\n"
     "🙈 — Скрыть комнату\n"
     "👁️ — Показать комнату\n\n"
     "-# Использовать их можно только когда у тебя есть приватный канал"
@@ -135,13 +136,21 @@ def setup_temp_room_commands(bot, cursor):
     # ============================================
 
     async def get_config(guild_id):
+        if guild_id in _config_cache:
+            return _config_cache[guild_id]
+
         await cursor.execute(
             'SELECT guild_id, category_id, create_channel_id, settings_channel_id, panel_message_id '
             'FROM temp_rooms_config WHERE guild_id = $1',
             guild_id
         )
         row = cursor.fetchone()
-        return ConfigRow(*row) if row else None
+        config = ConfigRow(*row) if row else None
+        _config_cache[guild_id] = config
+        return config
+
+    def invalidate_config(guild_id):
+        _config_cache.pop(guild_id, None)
 
     async def get_room_by_owner(guild_id, owner_id):
         await cursor.execute(
@@ -316,14 +325,12 @@ def setup_temp_room_commands(bot, cursor):
             super().__init__(timeout=60)
             self.channel_id = channel_id
             self.owner_id = owner_id
-            self.action = action  # 'kick' | 'mute' | 'unmute' | 'transfer'
+            self.action = action  # 'kick' | 'transfer'
             self.add_item(MemberActionSelect(self, members))
 
     class MemberActionSelect(Select):
         PLACEHOLDERS = {
             'kick': "Кого выгнать из комнаты",
-            'mute': "У кого забрать право говорить",
-            'unmute': "Кому вернуть право говорить",
             'transfer': "Кому передать управление",
         }
 
@@ -385,23 +392,11 @@ def setup_temp_room_commands(bot, cursor):
                             skipped.append(f"{member.mention} — уже не в канале")
                             continue
                         await safe_discord_call(lambda m=member: m.move_to(None, reason="Выгнан владельцем из приватной комнаты"))
-                    elif action == 'mute':
-                        await safe_discord_call(lambda m=member: channel.set_permissions(
-                            m, speak=False, reason="Право говорить забрано владельцем"
-                        ))
-                        if in_channel:
-                            await safe_discord_call(lambda m=member: m.edit(mute=True, reason="Право говорить забрано владельцем"))
-                    elif action == 'unmute':
-                        await safe_discord_call(lambda m=member: channel.set_permissions(
-                            m, speak=True, reason="Право говорить возвращено владельцем"
-                        ))
-                        if in_channel:
-                            await safe_discord_call(lambda m=member: m.edit(mute=False, reason="Право говорить возвращено владельцем"))
                     processed.append(member.mention)
                 except Exception:
                     skipped.append(f"{member.mention} — ошибка")
 
-            verbs = {'kick': "Выгнаны", 'mute': "Голос заблокирован", 'unmute': "Голос возвращён"}
+            verbs = {'kick': "Выгнаны"}
             summary = Embed(color=0x6e6e6e)
             if processed:
                 summary.add_field(name=f"✅ {verbs[action]}", value="\n".join(processed), inline=False)
@@ -533,32 +528,6 @@ def setup_temp_room_commands(bot, cursor):
             view = MemberActionSelectView(channel.id, room.owner_id, 'kick', members)
             await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
-        @discord.ui.button(emoji="🔇", style=ButtonStyle.secondary, custom_id="temprooms:mute", row=1)
-        async def btn_mute(self, interaction: Interaction, button: Button):
-            room, channel = await self._get_owner_room(interaction)
-            if not room:
-                return
-            members = [m for m in channel.members if not m.bot and m.id != room.owner_id]
-            if not members:
-                await interaction.response.send_message(embed=error_embed("В комнате сейчас нет других участников."), ephemeral=True)
-                return
-            embed = ok_embed(f"У кого забрать право говорить в комнате **{channel.name}**?")
-            view = MemberActionSelectView(channel.id, room.owner_id, 'mute', members)
-            await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
-
-        @discord.ui.button(emoji="🔊", style=ButtonStyle.secondary, custom_id="temprooms:unmute", row=1)
-        async def btn_unmute(self, interaction: Interaction, button: Button):
-            room, channel = await self._get_owner_room(interaction)
-            if not room:
-                return
-            members = [m for m in channel.members if not m.bot and m.id != room.owner_id]
-            if not members:
-                await interaction.response.send_message(embed=error_embed("В комнате сейчас нет других участников."), ephemeral=True)
-                return
-            embed = ok_embed(f"Кому вернуть право говорить в комнате **{channel.name}**?")
-            view = MemberActionSelectView(channel.id, room.owner_id, 'unmute', members)
-            await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
-
         # --- Ряд 3 ---
 
         @discord.ui.button(emoji="🙈", style=ButtonStyle.secondary, custom_id="temprooms:hide", row=2)
@@ -592,71 +561,152 @@ def setup_temp_room_commands(bot, cursor):
     # ============================================
 
     async def handle_room_creation(member, guild, config: ConfigRow):
-        # Если у пользователя уже есть активная комната — просто возвращаем его туда
-        existing = await get_room_by_owner(guild.id, member.id)
-        if existing:
-            existing_channel = await resolve_room_channel(guild, existing)
-            if existing_channel:
-                try:
-                    await safe_discord_call(lambda: member.move_to(existing_channel, reason="У пользователя уже есть активная комната"))
-                except Exception:
-                    pass
+        async with _get_lock(('member', member.id)):
+            # Если у пользователя уже есть активная комната — просто возвращаем его туда
+            existing = await get_room_by_owner(guild.id, member.id)
+            if existing:
+                existing_channel = await resolve_room_channel(guild, existing)
+                if existing_channel:
+                    try:
+                        await safe_discord_call(lambda: member.move_to(existing_channel, reason="У пользователя уже есть активная комната"))
+                    except Exception:
+                        pass
+                    return
+
+            category = guild.get_channel(config.category_id)
+            if category is None or not isinstance(category, discord.CategoryChannel):
                 return
 
-        category = guild.get_channel(config.category_id)
-        if category is None or not isinstance(category, discord.CategoryChannel):
-            return
+            # Название без эмодзи/символов: "Комната <ник игрока>"
+            room_name = f"Комната {member.display_name}"[:100]
 
-        room_name = f"🔊・Комната {member.display_name}"[:100]
+            try:
+                new_channel = await category.create_voice_channel(
+                    name=room_name,
+                    user_limit=DEFAULT_ROOM_LIMIT,
+                    overwrites=dict(category.overwrites),
+                    reason=f"Временная комната для {member}"
+                )
+            except discord.Forbidden:
+                return
+            except discord.HTTPException as e:
+                print(f"❌ Ошибка создания временной комнаты для {member}: {e}")
+                return
 
-        try:
-            new_channel = await category.create_voice_channel(
-                name=room_name,
-                user_limit=DEFAULT_ROOM_LIMIT,
-                reason=f"Временная комната для {member}"
-            )
-        except discord.Forbidden:
-            return
+            # Пишем комнату в БД ДО перемещения участника: если пользователь
+            # моментально отключится (обрыв связи), событие выхода уже найдёт
+            # запись комнаты в temp_rooms и корректно её подчистит — вместо
+            # того, чтобы канал остался физически "осиротевшим" без записи.
+            try:
+                await cursor.execute('''
+                    INSERT INTO temp_rooms (voice_channel_id, guild_id, owner_id, user_limit, is_locked, is_hidden, created_at, last_rename)
+                    VALUES ($1, $2, $3, $4, FALSE, FALSE, $5, NULL)
+                ''', new_channel.id, guild.id, member.id, DEFAULT_ROOM_LIMIT, datetime.now().strftime(DATE_FORMAT))
+            except Exception as e:
+                print(f"❌ Ошибка записи временной комнаты в БД: {e}")
 
-        try:
-            await safe_discord_call(lambda: member.move_to(new_channel, reason="Перемещение в новую временную комнату"))
-        except Exception:
-            pass
-
-        try:
-            await cursor.execute('''
-                INSERT INTO temp_rooms (voice_channel_id, guild_id, owner_id, user_limit, is_locked, is_hidden, created_at, last_rename)
-                VALUES ($1, $2, $3, $4, FALSE, FALSE, $5, NULL)
-            ''', new_channel.id, guild.id, member.id, DEFAULT_ROOM_LIMIT, datetime.now().strftime(DATE_FORMAT))
-        except Exception as e:
-            print(f"❌ Ошибка записи временной комнаты в БД: {e}")
+            try:
+                await safe_discord_call(lambda: member.move_to(new_channel, reason="Перемещение в новую временную комнату"))
+            except Exception:
+                pass
 
     async def on_voice_state_update(member, before, after):
         guild = member.guild
 
-        # === Вход в триггер-канал "Создать" ===
-        if after.channel is not None and (before.channel is None or before.channel.id != after.channel.id):
-            config = await get_config(guild.id)
-            if config and after.channel.id == config.create_channel_id:
-                await handle_room_creation(member, guild, config)
+        try:
+            # === Вход в триггер-канал "Создать" ===
+            if after.channel is not None and (before.channel is None or before.channel.id != after.channel.id):
+                config = await get_config(guild.id)
+                if config and after.channel.id == config.create_channel_id:
+                    await handle_room_creation(member, guild, config)
 
-        # === Выход из комнаты — проверяем опустела ли она ===
-        if before.channel is not None and (after.channel is None or after.channel.id != before.channel.id):
-            room = await get_room_by_channel(before.channel.id)
-            if room:
-                remaining = [m for m in before.channel.members if not m.bot]
-                if not remaining:
-                    try:
-                        await safe_discord_call(lambda c=before.channel: c.delete(reason="Комната опустела"))
-                    except Exception:
-                        pass
-                    await delete_room_row(before.channel.id)
+            # === Выход из комнаты — проверяем опустела ли она ===
+            if before.channel is not None and (after.channel is None or after.channel.id != before.channel.id):
+                config = await get_config(guild.id)
+                # Технические каналы системы ("Создать" / "настройка") никогда
+                # не хранятся в temp_rooms, но эта проверка — дополнительная
+                # страховка: их нельзя удалить в этой ветке ни при каких условиях.
+                is_system_channel = bool(config) and before.channel.id in (
+                    config.create_channel_id, config.settings_channel_id
+                )
+                if not is_system_channel:
+                    async with _get_lock(('channel', before.channel.id)):
+                        room = await get_room_by_channel(before.channel.id)
+                        if room:
+                            remaining = [m for m in before.channel.members if not m.bot]
+                            if not remaining:
+                                try:
+                                    await safe_discord_call(lambda c=before.channel: c.delete(reason="Комната опустела"))
+                                except Exception:
+                                    pass
+                                await delete_room_row(before.channel.id)
+        except Exception as e:
+            print(f"❌ Ошибка обработки on_voice_state_update для временных комнат: {e}")
 
     bot.add_listener(on_voice_state_update, 'on_voice_state_update')
 
     # ============================================
     # /vremcomnata — НАСТРОЙКА СИСТЕМЫ (АДМИНИСТРАЦИЯ)
     # ============================================
+
+    async def create_system_in_category(interaction: Interaction, category: discord.CategoryChannel):
+        guild = interaction.guild
+        await interaction.response.defer(ephemeral=True)
+
+        # Если система уже была настроена — убираем старые технические каналы
+        old_config = await get_config(guild.id)
+        if old_config:
+            for old_id in (old_config.create_channel_id, old_config.settings_channel_id):
+                old_channel = guild.get_channel(old_id) if old_id else None
+                if old_channel:
+                    try:
+                        await safe_discord_call(lambda c=old_channel: c.delete(reason="Переустановка системы временных комнат"))
+                    except Exception:
+                        pass
+
+        # Явно копируем overwrites категории — иначе новые каналы не наследуют
+        # ограничения доступа категории (Discord API не синхронизирует их
+        # автоматически при создании через API).
+        category_overwrites = dict(category.overwrites)
+
+        try:
+            create_channel = await category.create_voice_channel(
+                name=CREATE_CHANNEL_NAME,
+                user_limit=TRIGGER_CHANNEL_LIMIT,
+                overwrites=category_overwrites,
+                reason="Настройка системы временных комнат"
+            )
+            settings_channel = await category.create_text_channel(
+                name=SETTINGS_CHANNEL_NAME,
+                overwrites=category_overwrites,
+                reason="Настройка системы временных комнат"
+            )
+        except discord.Forbidden:
+            await interaction.edit_original_response(
+                embed=error_embed("У бота не хватает прав создавать каналы в этой категории."),
+                view=None
+            )
+            return
+
+        panel_message = await settings_channel.send(embed=build_panel_embed(), view=TempRoomPanelView())
+
+        await cursor.execute('''
+            INSERT INTO temp_rooms_config (guild_id, category_id, create_channel_id, settings_channel_id, panel_message_id)
+            VALUES ($1, $2, $3, $4, $5)
+            ON CONFLICT (guild_id) DO UPDATE SET
+                category_id = EXCLUDED.category_id,
+                create_channel_id = EXCLUDED.create_channel_id,
+                settings_channel_id = EXCLUDED.settings_channel_id,
+                panel_message_id = EXCLUDED.panel_message_id
+        ''', guild.id, category.id, create_channel.id, settings_channel.id, panel_message.id)
+        invalidate_config(guild.id)
+
+        result_embed = ok_embed(
+            f"Система приватных временных комнат настроена в категории **{category.name}**.\n\n"
+            f"Заходи в {create_channel.mention}, чтобы создать свою комнату.\n"
+            f"Управлять ей можно через панель в {settings_channel.mention}."
+        )
+        await interaction.edit_original_response(embed=result_embed, view=None)
 
     class CategorySelectView(View):
         def __init__(self):
@@ -678,62 +728,81 @@ def setup_temp_room_commands(bot, cursor):
             if category is None or not isinstance(category, discord.CategoryChannel):
                 await interaction.response.edit_message(embed=error_embed("Не удалось найти выбранную категорию."), view=None)
                 return
+            await create_system_in_category(interaction, category)
 
-            await interaction.response.defer(ephemeral=True)
+    async def delete_system(guild: discord.Guild) -> bool:
+        """Полностью удаляет систему временных комнат: все активные личные
+        комнаты, канал-триггер, канал настройки и запись конфига."""
+        config = await get_config(guild.id)
+        if not config:
+            return False
 
-            # Если система уже была настроена — убираем старые технические каналы
-            old_config = await get_config(guild.id)
-            if old_config:
-                for old_id in (old_config.create_channel_id, old_config.settings_channel_id):
-                    old_channel = guild.get_channel(old_id) if old_id else None
-                    if old_channel:
-                        try:
-                            await safe_discord_call(lambda c=old_channel: c.delete(reason="Переустановка системы временных комнат"))
-                        except Exception:
-                            pass
+        await cursor.execute('SELECT voice_channel_id FROM temp_rooms WHERE guild_id = $1', guild.id)
+        room_rows = cursor.fetchall()
+        for (voice_channel_id,) in room_rows:
+            room_channel = guild.get_channel(voice_channel_id)
+            if room_channel:
+                try:
+                    await safe_discord_call(lambda c=room_channel: c.delete(reason="Удаление системы временных комнат"))
+                except Exception:
+                    pass
+        await cursor.execute('DELETE FROM temp_rooms WHERE guild_id = $1', guild.id)
 
-            try:
-                create_channel = await category.create_voice_channel(
-                    name=CREATE_CHANNEL_NAME,
-                    reason="Настройка системы временных комнат"
-                )
-                settings_channel = await category.create_text_channel(
-                    name=SETTINGS_CHANNEL_NAME,
-                    reason="Настройка системы временных комнат"
-                )
-            except discord.Forbidden:
-                await interaction.edit_original_response(
-                    embed=error_embed("У бота не хватает прав создавать каналы в этой категории."),
-                    view=None
+        for channel_id in (config.create_channel_id, config.settings_channel_id):
+            channel = guild.get_channel(channel_id) if channel_id else None
+            if channel:
+                try:
+                    await safe_discord_call(lambda c=channel: c.delete(reason="Удаление системы временных комнат"))
+                except Exception:
+                    pass
+
+        await cursor.execute('DELETE FROM temp_rooms_config WHERE guild_id = $1', guild.id)
+        invalidate_config(guild.id)
+        return True
+
+    class MainMenuView(View):
+        def __init__(self):
+            super().__init__(timeout=120)
+
+        @discord.ui.button(label="Создать", style=ButtonStyle.success, custom_id="temprooms:menu_create")
+        async def btn_create(self, interaction: Interaction, button: Button):
+            config = await get_config(interaction.guild.id)
+            if config:
+                await interaction.response.send_message(
+                    embed=error_embed("Система уже настроена на этом сервере. Используйте «Пересоздать», чтобы перенастроить её на другую категорию."),
+                    ephemeral=True
                 )
                 return
+            embed = ok_embed("Выберите категорию, в которой будет создана система приватных временных комнат.")
+            await interaction.response.send_message(embed=embed, view=CategorySelectView(), ephemeral=True)
 
-            panel_message = await settings_channel.send(embed=build_panel_embed(), view=TempRoomPanelView())
-
-            await cursor.execute('''
-                INSERT INTO temp_rooms_config (guild_id, category_id, create_channel_id, settings_channel_id, panel_message_id)
-                VALUES ($1, $2, $3, $4, $5)
-                ON CONFLICT (guild_id) DO UPDATE SET
-                    category_id = EXCLUDED.category_id,
-                    create_channel_id = EXCLUDED.create_channel_id,
-                    settings_channel_id = EXCLUDED.settings_channel_id,
-                    panel_message_id = EXCLUDED.panel_message_id
-            ''', guild.id, category.id, create_channel.id, settings_channel.id, panel_message.id)
-
-            result_embed = ok_embed(
-                f"Система приватных временных комнат настроена в категории **{category.name}**.\n\n"
-                f"Заходи в {create_channel.mention}, чтобы создать свою комнату.\n"
-                f"Управлять ей можно через панель в {settings_channel.mention}."
+        @discord.ui.button(label="Удалить", style=ButtonStyle.danger, custom_id="temprooms:menu_delete")
+        async def btn_delete(self, interaction: Interaction, button: Button):
+            config = await get_config(interaction.guild.id)
+            if not config:
+                await interaction.response.send_message(
+                    embed=error_embed("Система временных комнат ещё не настроена на этом сервере."),
+                    ephemeral=True
+                )
+                return
+            await interaction.response.defer(ephemeral=True)
+            await delete_system(interaction.guild)
+            await interaction.edit_original_response(
+                embed=ok_embed("Система приватных временных комнат удалена: технические каналы и все активные личные комнаты закрыты."),
+                view=None
             )
-            await interaction.edit_original_response(embed=result_embed, view=None)
+
+        @discord.ui.button(label="Пересоздать", style=ButtonStyle.primary, custom_id="temprooms:menu_recreate")
+        async def btn_recreate(self, interaction: Interaction, button: Button):
+            embed = ok_embed("Выберите категорию, в которой будет пересоздана система приватных временных комнат.")
+            await interaction.response.send_message(embed=embed, view=CategorySelectView(), ephemeral=True)
 
     @app_commands.command(name="vremcomnata", description="Настроить систему приватных временных комнат [Только для Администрации]")
     @app_commands.guild_only()
     @app_commands.check(is_admin)
     async def vremcomnata(interaction: Interaction):
-        embed = ok_embed("Выберите категорию, в которой будет создана система приватных временных комнат.")
-        view = CategorySelectView()
-        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+        embed = ok_embed("Выберите действие для системы приватных временных комнат.")
+        await interaction.response.send_message(embed=embed, view=MainMenuView(), ephemeral=True)
 
     @vremcomnata.error
     async def vremcomnata_error_handler(interaction: Interaction, error: app_commands.AppCommandError):
