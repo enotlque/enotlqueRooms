@@ -208,6 +208,13 @@ def setup_temp_room_commands(bot, cursor):
                 await interaction.response.send_message(embed=no_room_embed(), ephemeral=True)
                 return
 
+            if limit == 1 and len([m for m in channel.members if not m.bot]) <= 1:
+                await interaction.response.send_message(
+                    embed=error_embed("Нельзя поставить лимит 1, пока в комнате кроме вас никого нет."),
+                    ephemeral=True
+                )
+                return
+
             await safe_discord_call(lambda: channel.edit(user_limit=limit, reason="Изменение лимита участников владельцем комнаты"))
             await cursor.execute('UPDATE temp_rooms SET user_limit = $1 WHERE voice_channel_id = $2', limit, self.channel_id)
 
@@ -443,6 +450,13 @@ def setup_temp_room_commands(bot, cursor):
             room, channel = await self._get_owner_room(interaction)
             if not room:
                 return
+            others = [m for m in channel.members if not m.bot and m.id != room.owner_id]
+            if not others:
+                await interaction.response.send_message(
+                    embed=error_embed("Нельзя закрыть комнату, пока в ней кроме вас никого нет."),
+                    ephemeral=True
+                )
+                return
             await safe_discord_call(lambda: channel.set_permissions(
                 interaction.guild.default_role, connect=False, reason="Комната закрыта владельцем"
             ))
@@ -530,7 +544,7 @@ def setup_temp_room_commands(bot, cursor):
 
         # --- Ряд 3 ---
 
-        @discord.ui.button(emoji="🙈", style=ButtonStyle.secondary, custom_id="temprooms:hide", row=2)
+        @discord.ui.button(emoji="🙈", style=ButtonStyle.secondary, custom_id="temprooms:hide", row=1)
         async def btn_hide(self, interaction: Interaction, button: Button):
             room, channel = await self._get_owner_room(interaction)
             if not room:
@@ -541,7 +555,7 @@ def setup_temp_room_commands(bot, cursor):
             await cursor.execute('UPDATE temp_rooms SET is_hidden = TRUE WHERE voice_channel_id = $1', channel.id)
             await interaction.response.send_message(embed=ok_embed(f"Комната **{channel.name}** скрыта из списка каналов."), ephemeral=True)
 
-        @discord.ui.button(emoji="👁️", style=ButtonStyle.secondary, custom_id="temprooms:show", row=2)
+        @discord.ui.button(emoji="👁️", style=ButtonStyle.secondary, custom_id="temprooms:show", row=1)
         async def btn_show(self, interaction: Interaction, button: Button):
             room, channel = await self._get_owner_room(interaction)
             if not room:
