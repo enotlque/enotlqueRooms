@@ -371,9 +371,19 @@ async def marry(interaction: discord.Interaction, пользователь: disc
             return
 
         # === РЕЗЕРВИРУЕМ МОНЕТЫ ===
-        # Списываем их сразу, чтобы предотвратить трату
-        await cursor.execute('UPDATE user_profiles SET balance = balance - $1 WHERE user_id = $2', 
-                            MARRIAGE_COST, interaction.user.id)
+        # Списываем их сразу, чтобы предотвратить трату; атомарная проверка
+        # баланса встроена прямо в UPDATE, чтобы исключить гонку с другим
+        # одновременным /marry от того же отправителя.
+        await cursor.execute(
+            'UPDATE user_profiles SET balance = balance - $1 WHERE user_id = $2 AND balance >= $1 RETURNING balance',
+            MARRIAGE_COST, interaction.user.id
+        )
+        if cursor.fetchone() is None:
+            await interaction.response.send_message(
+                f"У вас недостаточно монет! Необходимо {MARRIAGE_COST} монет.",
+                ephemeral=True
+            )
+            return
         
         # Добавляем в список активных предложений
         active_proposals[interaction.user.id] = MARRIAGE_COST
@@ -496,4 +506,3 @@ def start_marriage_expiry_task(bot):
         await bot.wait_until_ready()
 
     check_marriage_expirations.start()
-
