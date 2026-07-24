@@ -17,7 +17,7 @@ async def get_cached(key: str):
         if data:
             return json.loads(data)
         return None
-    except:
+    except Exception:
         return None
 
 
@@ -26,7 +26,7 @@ async def set_cached(key: str, value, ttl: int = 300):
         return
     try:
         await redis_client.setex(key, ttl, json.dumps(value))
-    except:
+    except Exception:
         pass
 
 
@@ -35,7 +35,7 @@ async def delete_cached(key: str):
         return
     try:
         await redis_client.delete(key)
-    except:
+    except Exception:
         pass
 
 
@@ -46,7 +46,7 @@ async def delete_pattern(pattern: str):
         keys = await redis_client.keys(pattern)
         if keys:
             await redis_client.delete(*keys)
-    except:
+    except Exception:
         pass
 
 
