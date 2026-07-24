@@ -170,6 +170,119 @@ def setup_room_commands(bot, cursor, CATEGORY_ID, restricted_role_id):
     room_group = app_commands.Group(name="room", description="Управление комнатами")
     POSITION_UNDER_ROLE_ID = 1295482170374095049
 
+    # ============================================
+    # СИНХРОНИЗАЦИЯ БД С ФИЗИЧЕСКИМ УДАЛЕНИЕМ ОБЪЕКТОВ
+    # ============================================
+    # Если администратор вручную удаляет роль или один из каналов комнаты
+    # через Discord, комната должна исчезнуть из БД, а оставшиеся связанные
+    # объекты — быть удалены автоматически.
+    if not getattr(bot, "_room_delete_listeners_registered", False):
+        bot._room_delete_listeners_registered = True
+        room_cleanup_locks = set()
+
+        async def cleanup_room_by_row(row, deleted_object_id=None):
+            if not row:
+                return
+
+            leader_id, room_name, role_id, text_channel_id, voice_channel_id = row
+            lock_key = leader_id
+            if lock_key in room_cleanup_locks:
+                return
+            room_cleanup_locks.add(lock_key)
+
+            try:
+                # Сначала удаляем запись из БД, чтобы последующие события
+                # удаления связанных Discord-объектов не запускали очистку повторно.
+                await cursor.execute(
+                    'DELETE FROM room_leadership WHERE leader_id = $1',
+                    leader_id
+                )
+
+                # Удаляем оставшиеся физические объекты комнаты.
+                for guild in bot.guilds:
+                    role = guild.get_role(role_id) if role_id and role_id != deleted_object_id else None
+                    text_channel = guild.get_channel(text_channel_id) if text_channel_id and text_channel_id != deleted_object_id else None
+                    voice_channel = guild.get_channel(voice_channel_id) if voice_channel_id and voice_channel_id != deleted_object_id else None
+
+                    if role:
+                        try:
+                            await safe_discord_call(
+                                lambda role=role: role.delete(
+                                    reason=f"Очистка комнаты '{room_name}': связанный объект был удалён вручную"
+                                )
+                            )
+                        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                            pass
+
+                    if text_channel:
+                        try:
+                            await safe_discord_call(
+                                lambda text_channel=text_channel: text_channel.delete(
+                                    reason=f"Очистка комнаты '{room_name}': связанный объект был удалён вручную"
+                                )
+                            )
+                        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                            pass
+
+                    if voice_channel:
+                        try:
+                            await safe_discord_call(
+                                lambda voice_channel=voice_channel: voice_channel.delete(
+                                    reason=f"Очистка комнаты '{room_name}': связанный объект был удалён вручную"
+                                )
+                            )
+                        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                            pass
+
+                    # Объекты комнаты уникальны, поэтому после обработки
+                    # найденного сервера дальше искать не нужно.
+                    if role or text_channel or voice_channel:
+                        break
+
+                print(
+                    f"🗑️ Комната '{room_name}' удалена из БД: "
+                    "связанный Discord-объект был удалён вручную"
+                )
+            except Exception as e:
+                print(f"❌ Ошибка синхронизации удалённой комнаты '{room_name}': {e}")
+            finally:
+                room_cleanup_locks.discard(lock_key)
+
+        async def on_room_role_delete(role: discord.Role):
+            try:
+                await cursor.execute(
+                    """
+                    SELECT leader_id, room_name, role_id, text_channel_id, voice_channel_id
+                    FROM room_leadership
+                    WHERE role_id = $1
+                    """,
+                    role.id
+                )
+                row = cursor.fetchone()
+                if row:
+                    await cleanup_room_by_row(row, deleted_object_id=role.id)
+            except Exception as e:
+                print(f"❌ Ошибка обработки удаления роли комнаты '{role.name}': {e}")
+
+        async def on_room_channel_delete(channel: discord.abc.GuildChannel):
+            try:
+                await cursor.execute(
+                    """
+                    SELECT leader_id, room_name, role_id, text_channel_id, voice_channel_id
+                    FROM room_leadership
+                    WHERE text_channel_id = $1 OR voice_channel_id = $1
+                    """,
+                    channel.id
+                )
+                row = cursor.fetchone()
+                if row:
+                    await cleanup_room_by_row(row, deleted_object_id=channel.id)
+            except Exception as e:
+                print(f"❌ Ошибка обработки удаления канала комнаты '{channel.name}': {e}")
+
+        bot.add_listener(on_room_role_delete, "on_guild_role_delete")
+        bot.add_listener(on_room_channel_delete, "on_guild_channel_delete")
+
     async def update_manage_message(parent_view):
         """Обновляет основное сообщение управления комнатой (счетчик участников и т.д.)"""
         if parent_view.original_message is None:
@@ -566,7 +679,7 @@ def setup_room_commands(bot, cursor, CATEGORY_ID, restricted_role_id):
         embed.add_field(name="<:chat:1526013733833408612> Текстовой", value=text_channel_mention, inline=True)
         embed.add_field(name="<:eshepeople:1526013744314843222> Участников", value=str(member_count), inline=True)
 
-        await interaction.response.send_message(embed=embed)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @room_group.command(name="delete", description="Удалить комнату указанного пользователя [Только для Администрации]")
     @app_commands.describe(
@@ -753,10 +866,10 @@ def setup_room_commands(bot, cursor, CATEGORY_ID, restricted_role_id):
             self.room_balance = room_balance
 
             self.add_item(ManageButton(self))
-            self.add_item(ExtendRoomButton(self))
-            self.add_item(BankDepositButton(self))
             self.add_item(TransferOwnershipButton(self))
             self.add_item(DeleteRoomButton(self))
+            self.add_item(ExtendRoomButton(self))
+            self.add_item(BankDepositButton(self))
 
         def cached_embed(self):
             """Без похода в БД — для навигации назад/отмены, когда данные не менялись."""
@@ -771,7 +884,7 @@ def setup_room_commands(bot, cursor, CATEGORY_ID, restricted_role_id):
 
     class ManageButton(Button):
         def __init__(self, parent_view):
-            super().__init__(label="Управлять", style=ButtonStyle.secondary, emoji="<:knopka1:1526013750090399925>")
+            super().__init__(label="Управлять", style=ButtonStyle.secondary, emoji="<:knopka1:1526013750090399925>", row=0)
             self.parent_view = parent_view
 
         async def callback(self, interaction: Interaction):
@@ -839,7 +952,7 @@ def setup_room_commands(bot, cursor, CATEGORY_ID, restricted_role_id):
 
     class ExtendRoomButton(Button):
         def __init__(self, parent_view):
-            super().__init__(label="Продлить", style=ButtonStyle.secondary, emoji="<:beskone4:1337141486512242868>", row=2)
+            super().__init__(label="Продлить", style=ButtonStyle.secondary, emoji="<:beskone4:1337141486512242868>", row=1)
             self.parent_view = parent_view
 
         async def callback(self, interaction: Interaction):
@@ -850,7 +963,7 @@ def setup_room_commands(bot, cursor, CATEGORY_ID, restricted_role_id):
 
     class BankDepositButton(Button):
         def __init__(self, parent_view):
-            super().__init__(label="В банк", style=ButtonStyle.secondary, emoji="<a:coinonrole:1298391257042784266>", row=2)
+            super().__init__(label="В банк", style=ButtonStyle.secondary, emoji="<a:coinonrole:1298391257042784266>", row=1)
             self.parent_view = parent_view
 
         async def callback(self, interaction: Interaction):
@@ -861,7 +974,7 @@ def setup_room_commands(bot, cursor, CATEGORY_ID, restricted_role_id):
 
     class TransferOwnershipButton(Button):
         def __init__(self, parent_view):
-            super().__init__(label="Передать управление", style=ButtonStyle.secondary, emoji="<:crownaa:1337141290068086825>", row=2)
+            super().__init__(label="Передать управление", style=ButtonStyle.secondary, emoji="<:crownaa:1337141290068086825>", row=0)
             self.parent_view = parent_view
 
         async def callback(self, interaction: Interaction):
@@ -878,7 +991,7 @@ def setup_room_commands(bot, cursor, CATEGORY_ID, restricted_role_id):
 
     class DeleteRoomButton(Button):
         def __init__(self, parent_view):
-            super().__init__(label="Удалить", style=ButtonStyle.danger, emoji="<:krestic:1337141359286550618>", row=2)
+            super().__init__(label="Удалить", style=ButtonStyle.danger, emoji="<:krestic:1337141359286550618>", row=0)
             self.parent_view = parent_view
 
         async def callback(self, interaction: Interaction):
