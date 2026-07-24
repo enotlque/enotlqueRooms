@@ -136,17 +136,6 @@ async def init_db_pool():
                 )
             ''')
             print("✅ Таблица roles создана/проверена")
-
-            # Таблица привязок для умного лобби
-            await conn.execute('''
-                CREATE TABLE IF NOT EXISTS lobby_bindings (
-                    user_id BIGINT PRIMARY KEY,
-                    voice_channel_id BIGINT,
-                    bound_by BIGINT,
-                    bound_at TEXT
-                )
-            ''')
-            print("✅ Таблица lobby_bindings создана/проверена")
             
     finally:
         socket.getaddrinfo = original_getaddrinfo
@@ -227,7 +216,6 @@ conn = cursor
 # === ИМПОРТ МОДУЛЕЙ ===
 from commands_room import setup_room_commands, start_room_expiry_task
 from commands_staff import setup_staff_commands
-from commands_lobby import setup_lobby_commands
 from commands_activity import setup_activity_tracking
 # commands_economy теперь пакет (папка commands_economy/ с __init__.py),
 # разбитый на common/eco/top/profile/marriage/roles/slots/duel.py —
@@ -264,7 +252,6 @@ bot.tree.add_command(duel)
 
 setup_room_commands(bot, cursor, CATEGORY_ID, restricted_role_id)
 setup_staff_commands(bot, cursor)
-setup_lobby_commands(bot, cursor)
 setup_activity_tracking(bot, cursor, get_db_connection, release_db_connection)
 setup_role_delete_listener(bot)
 
