@@ -25,9 +25,6 @@ from rate_limiter import safe_discord_call
 from . import common
 from .common import create_embed, format_timedelta, get_user_balance, subtract_user_balance
 
-from . import common
-from .common import create_embed, format_timedelta, get_user_balance, subtract_user_balance
-
 # ============================================
 # ЗАЩИТА ОТ ГОНКИ ПРИ СОЗДАНИИ РОЛИ
 # ============================================
