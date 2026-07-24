@@ -264,11 +264,11 @@ async def me(interaction: discord.Interaction, пользователь: discord
                             await modal_interaction.response.send_message("Минимальная сумма пополнения — 1 монета.", ephemeral=True)
                             return
 
-                        result = await cursor.execute('SELECT balance FROM user_profiles WHERE user_id = $1', user.id)
-                        user_balance_row = cursor.fetchone()
-                        user_balance = user_balance_row[0] if user_balance_row else 0
-
-                        if user_balance < amount:
+                        await cursor.execute(
+                            'UPDATE user_profiles SET balance = balance - $1 WHERE user_id = $2 AND balance >= $1 RETURNING balance',
+                            amount, user.id
+                        )
+                        if cursor.fetchone() is None:
                             await modal_interaction.response.send_message(
                                 embed=discord.Embed(
                                     color=0x6e6e6e,
@@ -278,7 +278,6 @@ async def me(interaction: discord.Interaction, пользователь: discord
                             )
                             return
 
-                        await cursor.execute('UPDATE user_profiles SET balance = balance - $1 WHERE user_id = $2', amount, user.id)
                         await cursor.execute('UPDATE marriages SET marriage_balance = marriage_balance + $1 WHERE user1_id = $2 OR user2_id = $3', amount, user.id, user.id)
 
                         updated_marriage_embed = await create_marriage_embed(cursor, modal_interaction, user)
