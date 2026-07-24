@@ -136,6 +136,32 @@ async def init_db_pool():
                 )
             ''')
             print("✅ Таблица roles создана/проверена")
+
+            # Таблицы для системы приватных временных комнат (commands_temp_rooms.py)
+            await conn.execute('''
+                CREATE TABLE IF NOT EXISTS temp_rooms_config (
+                    guild_id BIGINT PRIMARY KEY,
+                    category_id BIGINT,
+                    create_channel_id BIGINT,
+                    settings_channel_id BIGINT,
+                    panel_message_id BIGINT
+                )
+            ''')
+            print("✅ Таблица temp_rooms_config создана/проверена")
+
+            await conn.execute('''
+                CREATE TABLE IF NOT EXISTS temp_rooms (
+                    voice_channel_id BIGINT PRIMARY KEY,
+                    guild_id BIGINT,
+                    owner_id BIGINT,
+                    user_limit INTEGER DEFAULT 2,
+                    is_locked BOOLEAN DEFAULT FALSE,
+                    is_hidden BOOLEAN DEFAULT FALSE,
+                    created_at TEXT,
+                    last_rename TEXT
+                )
+            ''')
+            print("✅ Таблица temp_rooms создана/проверена")
             
     finally:
         socket.getaddrinfo = original_getaddrinfo
@@ -217,6 +243,7 @@ conn = cursor
 from commands_room import setup_room_commands, start_room_expiry_task
 from commands_staff import setup_staff_commands
 from commands_activity import setup_activity_tracking
+from commands_temp_rooms import setup_temp_room_commands, start_temp_room_cleanup_task
 # commands_economy теперь пакет (папка commands_economy/ с __init__.py),
 # разбитый на common/eco/top/profile/marriage/roles/slots/duel.py —
 # импорты и вызовы ниже не меняются, __init__.py реэкспортирует всё то же самое.
@@ -254,6 +281,7 @@ setup_room_commands(bot, cursor, CATEGORY_ID, restricted_role_id)
 setup_staff_commands(bot, cursor)
 setup_activity_tracking(bot, cursor, get_db_connection, release_db_connection)
 setup_role_delete_listener(bot)
+setup_temp_room_commands(bot, cursor)
 
 
 # === ON_READY ===
@@ -283,6 +311,9 @@ async def on_ready():
 
     start_room_expiry_task(bot, cursor)
     print('✅ Задача автопроверки комнат запущена')
+
+    start_temp_room_cleanup_task(bot, cursor)
+    print('✅ Задача очистки временных комнат запущена')
 
     await asyncio.sleep(5)
     
