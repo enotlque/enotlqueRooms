@@ -3,9 +3,29 @@ import os
 
 DATABASE_URL = os.environ.get('DATABASE_URL')
 
-async def run_migrations():
-    """Создаёт индексы для ускорения запросов"""
+async def run_migrations(pool=None):
+    """Создаёт индексы для ускорения запросов.
+
+    pool - опциональный уже созданный asyncpg.Pool (main.py передаёт
+    db_pool). Если передан, используется соединение из пула вместо
+    отдельного asyncpg.connect(): это переиспользует уже проверенную
+    сетевую конфигурацию (main.py форсирует IPv4 при создании пула —
+    отдельный connect() в обход этого патча мог зависать/падать на
+    хостингах без IPv6 до базы) и не тратит лишнее соединение на старте.
+    """
+    if pool is not None:
+        async with pool.acquire() as conn:
+            await _create_indexes(conn)
+        return
+
     conn = await asyncpg.connect(DATABASE_URL)
+    try:
+        await _create_indexes(conn)
+    finally:
+        await conn.close()
+
+
+async def _create_indexes(conn):
     try:
         # Колонка для роли, выбранной для отображения в /me (может отсутствовать на старых БД)
         await conn.execute('''
@@ -55,7 +75,13 @@ async def run_migrations():
         ''')
         print("✅ Индекс idx_lobby_bindings_user_id создан")
 
+        # Индекс для поиска комнат по role_id (используется при сверке
+        # удалённых на сервере ролей комнат — раньше был full scan)
+        await conn.execute('''
+            CREATE INDEX IF NOT EXISTS idx_room_leadership_role_id 
+            ON room_leadership(role_id)
+        ''')
+        print("✅ Индекс idx_room_leadership_role_id создан")
+
     except Exception as e:
         print(f"❌ Ошибка создания индексов: {e}")
-    finally:
-        await conn.close()
