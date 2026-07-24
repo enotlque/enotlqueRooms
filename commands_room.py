@@ -3,6 +3,7 @@ from discord.ext import commands
 from discord import app_commands
 from discord import Intents
 import re
+from rate_limiter import safe_discord_call
 from discord import ButtonStyle
 from discord.ui import Button, View, Select, Modal, TextInput
 import asyncio
@@ -288,18 +289,18 @@ def setup_room_commands(bot, cursor, CATEGORY_ID, restricted_role_id):
         try:
             # Создание роли
             role_color = int(цвет.lstrip('#'), 16)
-            role = await guild.create_role(name=роль, color=discord.Color(role_color))
+            role = await safe_discord_call(lambda: guild.create_role(name=роль, color=discord.Color(role_color)))
 
             # Позиционирование роли
             if reference_role := guild.get_role(POSITION_UNDER_ROLE_ID):
                 try:
-                    await role.edit(position=reference_role.position - 1)
+                    await safe_discord_call(lambda: role.edit(position=reference_role.position - 1))
                 except discord.Forbidden:
                     await interaction.followup.send("Не удалось установить позицию роли!", ephemeral=True)
 
             # Создание каналов
-            text_channel = await guild.create_text_channel(комната, category=category)
-            voice_channel = await guild.create_voice_channel(f"◦ {комната}", category=category, user_limit=99)
+            text_channel = await safe_discord_call(lambda: guild.create_text_channel(комната, category=category))
+            voice_channel = await safe_discord_call(lambda: guild.create_voice_channel(f"◦ {комната}", category=category, user_limit=99))
 
             # Настройка прав доступа для текстового канала
             text_overwrites = {
@@ -333,8 +334,8 @@ def setup_room_commands(bot, cursor, CATEGORY_ID, restricted_role_id):
                 )
             }
 
-            await text_channel.edit(overwrites=text_overwrites)
-            await voice_channel.edit(overwrites=voice_overwrites)
+            await safe_discord_call(lambda: text_channel.edit(overwrites=text_overwrites))
+            await safe_discord_call(lambda: voice_channel.edit(overwrites=voice_overwrites))
         except Exception:
             # Откатываем списание — комната не создалась, деньги возвращаются
             await cursor.execute('UPDATE user_profiles SET balance = balance + $1 WHERE user_id = $2', ROOM_CREATE_COST, участник.id)
