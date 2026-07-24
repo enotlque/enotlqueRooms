@@ -94,7 +94,11 @@ def start_role_expiry_task(bot):
 
             if discord_role:
                 try:
-                    await discord_role.delete(reason="Автоматическое удаление: истёк срок действия роли")
+                    await safe_discord_call(
+                        lambda: discord_role.delete(
+                            reason="Автоматическое удаление: истёк срок действия роли"
+                        )
+                    )
                 except Exception as e:
                     print(f"❌ Не удалось удалить роль '{role_name}' на сервере: {e}")
 
@@ -330,7 +334,7 @@ async def _create_role_impl(interaction: discord.Interaction, название: 
         await interaction.followup.send(f"Произошла ошибка при установке позиции роли: {str(e)}", ephemeral=True)
         return
 
-    await interaction.user.add_roles(role)
+    await safe_discord_call(lambda: interaction.user.add_roles(role))
 
     creation_date = datetime.now()
     expiration_date = creation_date + timedelta(days=30)
@@ -511,7 +515,7 @@ class RoleSelectView(View):
                                    datetime.now().strftime("%d.%m.%Y в %Hч %Mм %Sс"), new_expiration_date, role_name)
                 role = get(interaction.guild.roles, name=role_name)
                 if role:
-                    await interaction.user.add_roles(role)
+                    await safe_discord_call(lambda: interaction.user.add_roles(role))
                 await interaction.response.send_message(f"Роль {role_name} разархивирована и выдана вам.", ephemeral=True)
             else:
                 remaining_time_delta = datetime.strptime(expiration_date, "%d.%m.%Y в %Hч %Mм %Sс") - datetime.now()
@@ -520,7 +524,7 @@ class RoleSelectView(View):
                                    datetime.now().strftime("%d.%m.%Y в %Hч %Mм %Sс"), remaining_time, role_name)
                 role = get(interaction.guild.roles, name=role_name)
                 if role:
-                    await interaction.user.remove_roles(role)
+                    await safe_discord_call(lambda: interaction.user.remove_roles(role))
                 await interaction.response.send_message(f"Роль {role_name} заархивирована и снята. Вычтено 250 монет.", ephemeral=True)
                 await subtract_user_balance(cursor, user_id, 250)
 
@@ -627,7 +631,11 @@ class RoleDeleteConfirmView(View):
         discord_role = get(interaction.guild.roles, name=role_name)
         if discord_role:
             try:
-                await discord_role.delete(reason=f"Роль удалена владельцем ({interaction.user.id}) через профиль")
+                await safe_discord_call(
+                    lambda: discord_role.delete(
+                        reason=f"Роль удалена владельцем ({interaction.user.id}) через профиль"
+                    )
+                )
             except Exception as e:
                 print(f"❌ Не удалось удалить роль '{role_name}' на сервере: {e}")
 
@@ -987,7 +995,7 @@ class RoleGiveConfirmButton(ui.Button):
 
         # Резервируем роль на время ожидания принятия
         await cursor.execute("UPDATE roles SET id_owner_now = -1 WHERE role_name = $1", role_name)
-        await sender.remove_roles(role_obj)
+        await safe_discord_call(lambda: sender.remove_roles(role_obj))
 
         # Закрываем ephemeral-меню отправителя
         await interaction.response.edit_message(
@@ -1033,13 +1041,13 @@ class RoleGiveAcceptView(ui.View):
 
         await cursor.execute("UPDATE roles SET id_owner_now = $1 WHERE role_name = $2", self.sender.id, self.role_name)
         try:
-            await self.sender.add_roles(self.role_obj)
+            await safe_discord_call(lambda: self.sender.add_roles(self.role_obj))
         except Exception:
             pass
 
         if self.message:
             try:
-                await self.message.delete()
+                await safe_discord_call(lambda: self.message.delete())
             except Exception:
                 pass
 
@@ -1079,7 +1087,7 @@ class RoleGiveAcceptView(ui.View):
             self.stop()
 
             await cursor.execute("UPDATE roles SET id_owner_now = $1 WHERE role_name = $2", self.получатель.id, self.role_name)
-            await self.получатель.add_roles(self.role_obj)
+            await safe_discord_call(lambda: self.получатель.add_roles(self.role_obj))
 
             if self.сумма > 0:
                 await cursor.execute("UPDATE user_profiles SET balance = balance + $1 WHERE user_id = $2", self.сумма, self.sender.id)
@@ -1100,7 +1108,7 @@ class RoleGiveAcceptView(ui.View):
         await interaction.channel.send(embed=success_embed)
 
         try:
-            await interaction.message.delete()
+            await safe_discord_call(lambda: interaction.message.delete())
         except Exception:
             pass
 
