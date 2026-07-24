@@ -197,7 +197,8 @@ class PgWrapper:
             raise RuntimeError("db_pool ещё не инициализирован (execute вызван до on_ready/init_db_pool)")
 
         async with pool.acquire() as conn:
-            if query.strip().upper().startswith('SELECT'):
+            normalized = query.strip().upper()
+            if normalized.startswith('SELECT') or ' RETURNING' in normalized:
                 result = await conn.fetch(query, *args)
             else:
                 result = await conn.execute(query, *args)
@@ -276,7 +277,7 @@ async def on_ready():
     await init_redis()
 
     from migrations import run_migrations
-    await run_migrations()
+    await run_migrations(db_pool)
     
     await reconcile_deleted_roles(bot)
     
