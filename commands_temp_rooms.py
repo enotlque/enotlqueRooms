@@ -1,5 +1,6 @@
 import discord
 import asyncio
+from contextlib import asynccontextmanager
 from discord import app_commands, Interaction, Embed, ButtonStyle
 from discord.ui import View, Button, Select, Modal, TextInput
 from discord.ext import tasks
@@ -10,7 +11,6 @@ from rate_limiter import safe_discord_call
 # ============================================
 # СИСТЕМА ПРИВАТНЫХ ВРЕМЕННЫХ КОМНАТ (join-to-create)
 # ============================================
-
 CREATE_CHANNEL_NAME = "┗➕ ◦ Создать"
 SETTINGS_CHANNEL_NAME = "┍⚙️・настройка"
 TRIGGER_CHANNEL_LIMIT = 2       # лимит у самого канала-триггера "Создать"
@@ -21,16 +21,35 @@ DATE_FORMAT = "%d.%m.%Y %H:%M:%S"
 # --- Кэш конфига системы temp_rooms по guild_id (экономит запросы к БД) ---
 _config_cache = {}
 
-# --- Локи на создание/удаление комнаты (ключ — произвольный, с префиксом) ---
 _locks = {}
 
 
-def _get_lock(key):
-    lock = _locks.get(key)
-    if lock is None:
-        lock = asyncio.Lock()
-        _locks[key] = lock
-    return lock
+class _LockEntry:
+    __slots__ = ("lock", "refcount")
+
+    def __init__(self):
+        self.lock = asyncio.Lock()
+        self.refcount = 0
+
+
+@asynccontextmanager
+async def _locked(key):
+    # Получение/создание записи и инкремент refcount — синхронный код без
+    # await между ними, поэтому в рамках одного event loop это атомарно и
+    # не может гонки с параллельной задачей на этом же ключе.
+    entry = _locks.get(key)
+    if entry is None:
+        entry = _LockEntry()
+        _locks[key] = entry
+    entry.refcount += 1
+
+    try:
+        async with entry.lock:
+            yield
+    finally:
+        entry.refcount -= 1
+        if entry.refcount <= 0 and _locks.get(key) is entry:
+            del _locks[key]
 
 ConfigRow = namedtuple('ConfigRow', 'guild_id category_id create_channel_id settings_channel_id panel_message_id')
 RoomRow = namedtuple('RoomRow', 'voice_channel_id guild_id owner_id user_limit is_locked is_hidden created_at last_rename')
@@ -575,7 +594,7 @@ def setup_temp_room_commands(bot, cursor):
     # ============================================
 
     async def handle_room_creation(member, guild, config: ConfigRow):
-        async with _get_lock(('member', member.id)):
+        async with _locked(('member', member.id)):
             # Если у пользователя уже есть активная комната — просто возвращаем его туда
             existing = await get_room_by_owner(guild.id, member.id)
             if existing:
@@ -644,7 +663,7 @@ def setup_temp_room_commands(bot, cursor):
                     config.create_channel_id, config.settings_channel_id
                 )
                 if not is_system_channel:
-                    async with _get_lock(('channel', before.channel.id)):
+                    async with _locked(('channel', before.channel.id)):
                         room = await get_room_by_channel(before.channel.id)
                         if room:
                             remaining = [m for m in before.channel.members if not m.bot]
