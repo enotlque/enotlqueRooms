@@ -66,16 +66,13 @@ class DiceButton(Button):
                 await interaction.followup.send("<:nerd:1295095424855834635> Этот вызов предназначен для другого игрока!", ephemeral=True)
                 return
 
-            result = await cursor.execute('SELECT balance FROM user_profiles WHERE user_id = $1', interaction.user.id)
-            row = cursor.fetchone()
-            challenger_balance = row[0] if row else None
-
-            if challenger_balance is None or challenger_balance < self.ставка:
+            await cursor.execute(
+                'UPDATE user_profiles SET balance = balance - $1 WHERE user_id = $2 AND balance >= $1 RETURNING balance',
+                self.ставка, interaction.user.id
+            )
+            if cursor.fetchone() is None:
                 await interaction.followup.send("У вас недостаточно монет для принятия вызова!", ephemeral=True)
                 return
-
-            await cursor.execute('UPDATE user_profiles SET balance = balance - $1 WHERE user_id = $2',
-                                  self.ставка, interaction.user.id)
 
             # СОЗДАЕМ КАРТИНКУ ДУЭЛИ
             try:
@@ -287,8 +284,13 @@ async def duel(interaction: discord.Interaction, ставка: int, против
             await interaction.response.send_message(embed=error_embed, ephemeral=True)
             return
 
-    await cursor.execute('UPDATE user_profiles SET balance = balance - $1 WHERE user_id = $2',
-                          ставка, interaction.user.id)
+    await cursor.execute(
+        'UPDATE user_profiles SET balance = balance - $1 WHERE user_id = $2 AND balance >= $1 RETURNING balance',
+        ставка, interaction.user.id
+    )
+    if cursor.fetchone() is None:
+        await interaction.response.send_message("У вас недостаточно монет для такой ставки!", ephemeral=True)
+        return
 
     embed = discord.Embed(color=int("6e6e6e", 16))
     embed.set_author(name=f"Брошен вызов в кости - {interaction.user.name}",
