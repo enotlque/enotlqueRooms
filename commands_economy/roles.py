@@ -20,6 +20,7 @@ import io
 from PIL import Image, ImageDraw, ImageFont
 from cache import get_cached, set_cached, delete_cached, balance_cache_key, profile_cache_key, top_cache_key
 from commands_profile import create_profile_image, get_active_role_names, get_member_room_options
+from rate_limiter import safe_discord_call
 
 from . import common
 from .common import create_embed, format_timedelta, get_user_balance, subtract_user_balance
@@ -314,12 +315,12 @@ async def _create_role_impl(interaction: discord.Interaction, название: 
         await interaction.followup.send("Не удалось найти роль для позиционирования.", ephemeral=True)
         return
         
-    role = await guild.create_role(name=название, color=discord.Color(int(цвет, 16)))
+    role = await safe_discord_call(lambda: guild.create_role(name=название, color=discord.Color(int(цвет, 16))))
     
     try:
         positions = {r: r.position for r in guild.roles}
         positions[role] = reference_role.position
-        await guild.edit_role_positions(positions)
+        await safe_discord_call(lambda: guild.edit_role_positions(positions))
     except discord.Forbidden:
         await cursor.execute("UPDATE user_profiles SET balance = balance + 1250 WHERE user_id = $1", interaction.user.id)
         await interaction.followup.send("У бота недостаточно прав для изменения позиции роли.", ephemeral=True)
