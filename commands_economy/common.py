@@ -52,12 +52,18 @@ async def get_user_balance(cursor, user_id):
 
 
 async def subtract_user_balance(cursor, user_id, amount):
-    result = await cursor.execute('SELECT balance FROM user_profiles WHERE user_id = $1', user_id)
-    row = cursor.fetchone()
-    if row:
-        current_balance = row[0]
-        if current_balance >= amount:
-            new_balance = current_balance - amount
-            await cursor.execute('UPDATE user_profiles SET balance = $1 WHERE user_id = $2', new_balance, user_id)
-            return True
-    return False
+    """Атомарно списывает amount с баланса user_id, если средств достаточно.
+
+    Раньше это делалось в 2 шага (SELECT баланса -> проверка в Python ->
+    UPDATE), между которыми был зазор: два одновременных вызова для одного
+    и того же пользователя могли оба пройти проверку по устаревшему
+    значению баланса и оба списать деньги, уводя баланс в минус. Теперь
+    проверка "хватает ли денег" встроена прямо в WHERE самого UPDATE —
+    списание либо происходит целиком атомарно на стороне БД, либо не
+    происходит вовсе, гонка невозможна в принципе.
+    """
+    await cursor.execute(
+        'UPDATE user_profiles SET balance = balance - $1 WHERE user_id = $2 AND balance >= $1 RETURNING balance',
+        amount, user_id
+    )
+    return cursor.fetchone() is not None
