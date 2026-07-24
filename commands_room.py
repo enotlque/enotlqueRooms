@@ -903,7 +903,10 @@ def setup_room_commands(bot, cursor, CATEGORY_ID, restricted_role_id):
                 voice_channel=self.parent_view.voice_channel,
                 is_channel_open=self.parent_view.is_channel_open,
                 interaction=interaction,
-                original_view=self.parent_view
+                original_view=self.parent_view,
+                creation_date=self.parent_view.creation_date,
+                expiration_date=self.parent_view.expiration_date,
+                room_balance=self.parent_view.room_balance
             )
 
             embed = self.parent_view.original_message.embeds[0]
@@ -1266,7 +1269,8 @@ def setup_room_commands(bot, cursor, CATEGORY_ID, restricted_role_id):
                     pass
 
     class ManageRoomView(View):
-        def __init__(self, owner_role_id, owner, room_name, member_count, voice_channel, is_channel_open, interaction, original_view):
+        def __init__(self, owner_role_id, owner, room_name, member_count, voice_channel, is_channel_open, interaction, original_view,
+                     creation_date=None, expiration_date=None, room_balance=0):
             super().__init__()
             self.owner_role_id = owner_role_id
             self.owner = owner
@@ -1277,15 +1281,24 @@ def setup_room_commands(bot, cursor, CATEGORY_ID, restricted_role_id):
             self.interaction = interaction
             self.original_view = original_view
             self.original_message = original_view.original_message
+            # ВАЖНО: эти три поля нужны BackButton, чтобы вернуться на InitialView
+            # (см. фикс бага "не отвечает вовремя" ниже) — их отсутствие раньше
+            # приводило к AttributeError до отправки ответа Discord.
+            self.creation_date = creation_date
+            self.expiration_date = expiration_date
+            self.room_balance = room_balance
 
             self.add_item(InviteButton(owner_role_id, self))
             self.add_item(RemoveButton(owner_role_id, self))
+            self.add_item(KickButton(owner_role_id, self))
             
             if self.voice_channel:
                 if self.is_channel_open:
-                    self.add_item(CloseChannelButton(owner_role_id, owner, room_name, member_count, voice_channel, original_view.original_message))
+                    self.add_item(CloseChannelButton(owner_role_id, owner, room_name, member_count, voice_channel, original_view.original_message,
+                                                      creation_date, expiration_date, room_balance))
                 else:
-                    self.add_item(OpenChannelButton(owner_role_id, owner, room_name, member_count, voice_channel, original_view.original_message))
+                    self.add_item(OpenChannelButton(owner_role_id, owner, room_name, member_count, voice_channel, original_view.original_message,
+                                                     creation_date, expiration_date, room_balance))
             
             self.add_item(MembersListButton(owner_role_id, self))
             self.add_item(BackButton(self))
@@ -1463,8 +1476,120 @@ def setup_room_commands(bot, cursor, CATEGORY_ID, restricted_role_id):
         def is_owner(self, interaction: Interaction):
             return any(role.id == self.owner_role_id for role in interaction.user.roles)
 
+    class KickButton(Button):
+        """Кикает участников из ГОЛОСОВОГО канала комнаты прямо сейчас
+        (в отличие от «Исключить», которая снимает роль/членство в комнате)."""
+
+        def __init__(self, owner_role_id, parent_view):
+            super().__init__(label="Выгнать", style=ButtonStyle.secondary, emoji="<:xrestik:1526013747112448090>", row=0)
+            self.owner_role_id = owner_role_id
+            self.parent_view = parent_view
+
+        async def callback(self, interaction: Interaction):
+            if not self.is_owner(interaction):
+                await interaction.response.send_message(embed=Embed(description="Вы не являетесь владельцем этой комнаты.", color=0xFF0000), ephemeral=True)
+                return
+
+            voice_channel = self.parent_view.voice_channel
+            if not voice_channel:
+                await interaction.response.send_message(embed=Embed(description="Голосовой канал не найден.", color=0xFF0000), ephemeral=True)
+                return
+
+            members_in_channel = [m for m in voice_channel.members if m.id != interaction.user.id]
+            if not members_in_channel:
+                await interaction.response.send_message(embed=Embed(description="В голосовом канале сейчас никого нет (кроме вас).", color=0xFF0000), ephemeral=True)
+                return
+
+            embed = Embed(
+                description=(
+                    f"Выберите участников, которых хотите выгнать из голосового канала комнаты **{self.parent_view.room_name}**.\n"
+                    f"-# Список показывает тех, кто сейчас подключён к каналу."
+                ),
+                color=0x6e6e6e
+            )
+            embed.set_author(name="Выгнать из канала", icon_url=interaction.user.display_avatar.url)
+
+            view = KickSelectView(self.owner_role_id, self.parent_view, interaction.user, members_in_channel)
+            await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+
+        def is_owner(self, interaction: Interaction):
+            return any(role.id == self.owner_role_id for role in interaction.user.roles)
+
+    # === Выгнать из голосового канала: список строится из реальных участников канала,
+    # а не через глобальный UserSelect (как у "Пригласить"/"Исключить"), т.к. кикать
+    # можно только тех, кто прямо сейчас в канале ===
+    class KickSelectView(View):
+        def __init__(self, owner_role_id, parent_view, owner, members_in_channel):
+            super().__init__(timeout=60)
+            self.owner_role_id = owner_role_id
+            self.parent_view = parent_view
+            self.owner = owner
+            self.add_item(KickMemberSelect(self, members_in_channel))
+
+    class KickMemberSelect(Select):
+        def __init__(self, select_owner_view: "KickSelectView", members_in_channel: list):
+            options = [
+                discord.SelectOption(label=member.display_name[:100], value=str(member.id))
+                for member in members_in_channel[:25]
+            ]
+            super().__init__(
+                placeholder="Выберите участников для кика",
+                min_values=1,
+                max_values=len(options),
+                options=options
+            )
+            self.select_owner_view = select_owner_view
+
+        async def callback(self, interaction: Interaction):
+            guild = interaction.guild
+            parent_view = self.select_owner_view.parent_view
+            owner = self.select_owner_view.owner
+            voice_channel = parent_view.voice_channel
+
+            if not voice_channel:
+                await interaction.response.edit_message(
+                    embed=Embed(description="Голосовой канал не найден.", color=0xFF0000),
+                    view=None
+                )
+                return
+
+            await interaction.response.defer(ephemeral=True)
+
+            kicked = []
+            skipped = []
+
+            for value in self.values:
+                member = guild.get_member(int(value))
+                if member is None:
+                    skipped.append(f"<@{value}> — не найден на сервере")
+                    continue
+                if member.id == owner.id:
+                    skipped.append(f"{member.mention} — вы владелец комнаты")
+                    continue
+                if member.voice is None or member.voice.channel is None or member.voice.channel.id != voice_channel.id:
+                    skipped.append(f"{member.mention} — уже не в канале")
+                    continue
+
+                try:
+                    await safe_discord_call(lambda m=member: m.move_to(None, reason="Выгнан владельцем из голосового канала комнаты"))
+                    kicked.append(member.mention)
+                except Exception:
+                    skipped.append(f"{member.mention} — ошибка исключения")
+
+            summary = Embed(color=0x6e6e6e)
+            summary.set_author(name="Выгнаны из канала", icon_url=owner.display_avatar.url)
+            if kicked:
+                summary.add_field(name="<:checkmark:1526013748718993428> Выгнаны", value="\n".join(kicked), inline=False)
+            if skipped:
+                summary.add_field(name="<:xrestik:1526013747112448090> Пропущены", value="\n".join(skipped), inline=False)
+            if not kicked and not skipped:
+                summary.description = "Никто не был выбран."
+
+            await interaction.edit_original_response(embed=summary, view=None)
+
     class OpenChannelButton(Button):
-        def __init__(self, owner_role_id, owner, room_name, member_count, voice_channel, original_message):
+        def __init__(self, owner_role_id, owner, room_name, member_count, voice_channel, original_message,
+                     creation_date=None, expiration_date=None, room_balance=0):
             super().__init__(label="Закрыта", style=ButtonStyle.secondary, emoji="<:galo4ka:1526013745254629470>", row=1)
             self.owner_role_id = owner_role_id
             self.owner = owner
@@ -1472,6 +1597,9 @@ def setup_room_commands(bot, cursor, CATEGORY_ID, restricted_role_id):
             self.member_count = member_count
             self.voice_channel = voice_channel
             self.original_message = original_message
+            self.creation_date = creation_date
+            self.expiration_date = expiration_date
+            self.room_balance = room_balance
 
         async def callback(self, interaction: Interaction):
             if not self.is_owner(interaction):
@@ -1492,7 +1620,10 @@ def setup_room_commands(bot, cursor, CATEGORY_ID, restricted_role_id):
                     voice_channel=self.voice_channel,
                     is_channel_open=True,
                     interaction=interaction,
-                    original_view=temp_view
+                    original_view=temp_view,
+                    creation_date=self.creation_date,
+                    expiration_date=self.expiration_date,
+                    room_balance=self.room_balance
                 )
                 
                 await interaction.response.edit_message(embed=self.create_embed(), view=new_view)
@@ -1517,7 +1648,8 @@ def setup_room_commands(bot, cursor, CATEGORY_ID, restricted_role_id):
             )
 
     class CloseChannelButton(Button):
-        def __init__(self, owner_role_id, owner, room_name, member_count, voice_channel, original_message):
+        def __init__(self, owner_role_id, owner, room_name, member_count, voice_channel, original_message,
+                     creation_date=None, expiration_date=None, room_balance=0):
             super().__init__(label="Открыта", style=ButtonStyle.secondary, emoji="<:offff:1526013732591894788>", row=1)
             self.owner_role_id = owner_role_id
             self.owner = owner
@@ -1525,6 +1657,9 @@ def setup_room_commands(bot, cursor, CATEGORY_ID, restricted_role_id):
             self.member_count = member_count
             self.voice_channel = voice_channel
             self.original_message = original_message
+            self.creation_date = creation_date
+            self.expiration_date = expiration_date
+            self.room_balance = room_balance
 
         async def callback(self, interaction: Interaction):
             if not self.is_owner(interaction):
@@ -1545,7 +1680,10 @@ def setup_room_commands(bot, cursor, CATEGORY_ID, restricted_role_id):
                     voice_channel=self.voice_channel,
                     is_channel_open=False,
                     interaction=interaction,
-                    original_view=temp_view
+                    original_view=temp_view,
+                    creation_date=self.creation_date,
+                    expiration_date=self.expiration_date,
+                    room_balance=self.room_balance
                 )
                 
                 await interaction.response.edit_message(embed=self.create_embed(), view=new_view)
