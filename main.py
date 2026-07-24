@@ -79,6 +79,9 @@ async def init_db_pool():
                     text_channel_id BIGINT,
                     voice_channel_id BIGINT,
                     creation_date TEXT,
+                    expiration_date TEXT,
+                    room_balance INTEGER DEFAULT 0,
+                    extend_date TEXT,
                     text_channel_last_rename TIMESTAMP,
                     voice_channel_last_rename TIMESTAMP
                 )
@@ -199,7 +202,7 @@ cursor = PgWrapper()
 conn = cursor
 
 # === ИМПОРТ МОДУЛЕЙ ===
-from commands_room import setup_room_commands
+from commands_room import setup_room_commands, start_room_expiry_task
 from commands_staff import setup_staff_commands
 from commands_lobby import setup_lobby_commands
 from commands_activity import setup_activity_tracking
@@ -267,6 +270,9 @@ async def on_ready():
     
     start_role_expiry_task(bot)
     print('✅ Задача автопроверки ролей запущена')
+
+    start_room_expiry_task(bot, cursor)
+    print('✅ Задача автопроверки комнат запущена')
 
     await asyncio.sleep(5)
     
