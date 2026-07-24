@@ -179,6 +179,13 @@ def setup_room_commands(bot, cursor, CATEGORY_ID, restricted_role_id):
     MAX_PENDING_INVITES = 10
     pending_invites: dict = {}
 
+    # Защита от гонки при создании комнаты: между проверкой "нет ли уже
+    # комнаты у этого владельца" и записью новой комнаты в БД проходит
+    # несколько сетевых вызовов к Discord (создание роли/каналов), за это
+    # время повторный/двойной вызов команды тем же пользователем может
+    # проскочить ту же проверку по устаревшим данным.
+    _creating_room_users: set = set()
+
     @room_group.command(name="create", description=f"Создать собственную комнату ({ROOM_CREATE_COST} монет)")
     @app_commands.describe(
         комната="Название комнаты",
@@ -192,6 +199,19 @@ def setup_room_commands(bot, cursor, CATEGORY_ID, restricted_role_id):
 
         await interaction.response.defer(ephemeral=True)
 
+        if участник.id in _creating_room_users:
+            await interaction.followup.send(
+                embed=Embed(description="Дождитесь завершения предыдущего создания комнаты.", color=0xFF0000),
+                ephemeral=True
+            )
+            return
+        _creating_room_users.add(участник.id)
+        try:
+            await _createroom_impl(interaction, комната, роль, цвет, guild, участник, category)
+        finally:
+            _creating_room_users.discard(участник.id)
+
+    async def _createroom_impl(interaction: discord.Interaction, комната: str, роль: str, цвет: str, guild, участник, category):
         # Проверка категории
         if category is None or not isinstance(category, discord.CategoryChannel):
             await interaction.followup.send(
@@ -248,10 +268,14 @@ def setup_room_commands(bot, cursor, CATEGORY_ID, restricted_role_id):
             )
             return
 
-        # Проверка баланса
-        await cursor.execute('SELECT balance FROM user_profiles WHERE user_id = $1', участник.id)
-        profile = cursor.fetchone()
-        if not profile or profile[0] < ROOM_CREATE_COST:
+        # Проверка и атомарное списание баланса (сразу, а не после создания роли/каналов —
+        # иначе за время сетевых вызовов к Discord параллельный /room create успевал
+        # проскочить проверку по тому же устаревшему балансу)
+        await cursor.execute(
+            'UPDATE user_profiles SET balance = balance - $1 WHERE user_id = $2 AND balance >= $1 RETURNING balance',
+            ROOM_CREATE_COST, участник.id
+        )
+        if cursor.fetchone() is None:
             await interaction.followup.send(
                 embed=Embed(
                     description=f"Недостаточно средств для создания комнаты. Требуется {ROOM_CREATE_COST} монет.",
@@ -261,58 +285,64 @@ def setup_room_commands(bot, cursor, CATEGORY_ID, restricted_role_id):
             )
             return
 
-        # Создание роли
-        role_color = int(цвет.lstrip('#'), 16)
-        role = await guild.create_role(name=роль, color=discord.Color(role_color))
+        try:
+            # Создание роли
+            role_color = int(цвет.lstrip('#'), 16)
+            role = await guild.create_role(name=роль, color=discord.Color(role_color))
 
-        # Позиционирование роли
-        if reference_role := guild.get_role(POSITION_UNDER_ROLE_ID):
-            try:
-                await role.edit(position=reference_role.position - 1)
-            except discord.Forbidden:
-                await interaction.followup.send("Не удалось установить позицию роли!", ephemeral=True)
+            # Позиционирование роли
+            if reference_role := guild.get_role(POSITION_UNDER_ROLE_ID):
+                try:
+                    await role.edit(position=reference_role.position - 1)
+                except discord.Forbidden:
+                    await interaction.followup.send("Не удалось установить позицию роли!", ephemeral=True)
 
-        # Создание каналов
-        text_channel = await guild.create_text_channel(комната, category=category)
-        voice_channel = await guild.create_voice_channel(f"◦ {комната}", category=category, user_limit=99)
+            # Создание каналов
+            text_channel = await guild.create_text_channel(комната, category=category)
+            voice_channel = await guild.create_voice_channel(f"◦ {комната}", category=category, user_limit=99)
 
-        # Настройка прав доступа для текстового канала
-        text_overwrites = {
-            guild.default_role: discord.PermissionOverwrite(read_messages=False, connect=False),
-            role: discord.PermissionOverwrite(
-                read_messages=True,
-                send_messages=True,
-                connect=True,
-                view_channel=True
-            ),
-            guild.get_role(restricted_role_id): discord.PermissionOverwrite(
-                read_messages=False,
-                view_channel=False
+            # Настройка прав доступа для текстового канала
+            text_overwrites = {
+                guild.default_role: discord.PermissionOverwrite(read_messages=False, connect=False),
+                role: discord.PermissionOverwrite(
+                    read_messages=True,
+                    send_messages=True,
+                    connect=True,
+                    view_channel=True
+                ),
+                guild.get_role(restricted_role_id): discord.PermissionOverwrite(
+                    read_messages=False,
+                    view_channel=False
+                )
+            }
+
+            # Настройка прав доступа для голосового канала
+            voice_overwrites = {
+                guild.default_role: discord.PermissionOverwrite(
+                    view_channel=True,  # Разрешаем просмотр
+                    connect=False       # Запрещаем вход
+                ),
+                role: discord.PermissionOverwrite(
+                    view_channel=True,  # Разрешаем просмотр
+                    connect=True,       # Разрешаем вход
+                    speak=True         # Разрешаем говорить
+                ),
+                guild.get_role(restricted_role_id): discord.PermissionOverwrite(
+                    view_channel=False,
+                    connect=False
+                )
+            }
+
+            await text_channel.edit(overwrites=text_overwrites)
+            await voice_channel.edit(overwrites=voice_overwrites)
+        except Exception:
+            # Откатываем списание — комната не создалась, деньги возвращаются
+            await cursor.execute('UPDATE user_profiles SET balance = balance + $1 WHERE user_id = $2', ROOM_CREATE_COST, участник.id)
+            await interaction.followup.send(
+                embed=Embed(description="Не удалось создать комнату, средства возвращены.", color=0xFF0000),
+                ephemeral=True
             )
-        }
-
-        # Настройка прав доступа для голосового канала
-        voice_overwrites = {
-            guild.default_role: discord.PermissionOverwrite(
-                view_channel=True,  # Разрешаем просмотр
-                connect=False       # Запрещаем вход
-            ),
-            role: discord.PermissionOverwrite(
-                view_channel=True,  # Разрешаем просмотр
-                connect=True,       # Разрешаем вход
-                speak=True         # Разрешаем говорить
-            ),
-            guild.get_role(restricted_role_id): discord.PermissionOverwrite(
-                view_channel=False,
-                connect=False
-            )
-        }
-
-        await text_channel.edit(overwrites=text_overwrites)
-        await voice_channel.edit(overwrites=voice_overwrites)
-
-        # Списание стоимости
-        await cursor.execute('UPDATE user_profiles SET balance = balance - $1 WHERE user_id = $2', ROOM_CREATE_COST, участник.id)
+            raise
 
         creation_date = datetime.now()
         expiration_date = creation_date + timedelta(days=ROOM_CREATE_DAYS)
@@ -1038,18 +1068,18 @@ def setup_room_commands(bot, cursor, CATEGORY_ID, restricted_role_id):
                 await interaction.response.send_message("Комнату уже нельзя продлить дальше максимального срока.", ephemeral=True)
                 return
 
-            await cursor.execute('SELECT balance FROM user_profiles WHERE user_id = $1', interaction.user.id)
-            balance_row = cursor.fetchone()
-            user_balance = balance_row[0] if balance_row else 0
-            if user_balance < cost:
-                await interaction.response.send_message(f"Недостаточно монет для продления. Необходимо {cost}, а у вас {user_balance}.", ephemeral=True)
+            await cursor.execute(
+                'UPDATE user_profiles SET balance = balance - $1 WHERE user_id = $2 AND balance >= $1 RETURNING balance',
+                cost, interaction.user.id
+            )
+            if cursor.fetchone() is None:
+                await interaction.response.send_message(f"Недостаточно монет для продления. Необходимо {cost} монет.", ephemeral=True)
                 return
 
             await cursor.execute(
                 'UPDATE room_leadership SET expiration_date = $1, extend_date = $2 WHERE leader_id = $3',
                 new_expiration_date.strftime(ROOM_DATE_FORMAT), datetime.now().strftime(ROOM_DATE_FORMAT), self.leader_id
             )
-            await cursor.execute('UPDATE user_profiles SET balance = balance - $1 WHERE user_id = $2', cost, interaction.user.id)
 
             await interaction.response.send_message(
                 f"Комната {room_name} успешно продлена на {actual_days_extended} дней за {cost} монет!", ephemeral=True
@@ -1080,13 +1110,6 @@ def setup_room_commands(bot, cursor, CATEGORY_ID, restricted_role_id):
                 await interaction.response.send_message("Введите положительное число монет.", ephemeral=True)
                 return
 
-            await cursor.execute('SELECT balance FROM user_profiles WHERE user_id = $1', interaction.user.id)
-            balance_row = cursor.fetchone()
-            user_balance = balance_row[0] if balance_row else 0
-            if user_balance < amount:
-                await interaction.response.send_message(f"У вас недостаточно монет. Необходимо {amount}, а у вас {user_balance}.", ephemeral=True)
-                return
-
             await cursor.execute('SELECT room_name FROM room_leadership WHERE leader_id = $1', self.leader_id)
             row = cursor.fetchone()
             if not row:
@@ -1094,8 +1117,15 @@ def setup_room_commands(bot, cursor, CATEGORY_ID, restricted_role_id):
                 return
             room_name = row[0]
 
+            await cursor.execute(
+                'UPDATE user_profiles SET balance = balance - $1 WHERE user_id = $2 AND balance >= $1 RETURNING balance',
+                amount, interaction.user.id
+            )
+            if cursor.fetchone() is None:
+                await interaction.response.send_message(f"У вас недостаточно монет. Необходимо {amount}.", ephemeral=True)
+                return
+
             await cursor.execute('UPDATE room_leadership SET room_balance = room_balance + $1 WHERE leader_id = $2', amount, self.leader_id)
-            await cursor.execute('UPDATE user_profiles SET balance = balance - $1 WHERE user_id = $2', amount, interaction.user.id)
 
             await interaction.response.send_message(f"Вы внесли {amount} монет в банк комнаты {room_name}.", ephemeral=True)
 
