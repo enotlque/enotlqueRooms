@@ -62,16 +62,15 @@ def is_admin(interaction: discord.Interaction) -> bool:
 PANEL_EMBED_DESCRIPTION = (
     "**Управление приватной комнатой**\n\n"
     "Жми следующие кнопки, чтобы настроить свою комнату\n\n"
-    "👤 — Установить лимит\n"
-    "🔒 — Закрыть комнату\n"
-    "🔓 — Открыть комнату\n"
-    "🚫 — Забрать доступ\n"
-    "✅ — Выдать доступ\n\n"
-    "✏️ — Сменить название\n"
-    "👑 — Передать владельца\n"
-    "👢 — Выгнать из комнаты\n\n"
-    "🙈 — Скрыть комнату\n"
-    "👁️ — Показать комнату\n\n"
+    "<:unlockroom:1530362729863315516> — Открыть комнату\n"
+    "<:kickroom:1530362848776294622> — Выгнать из комнаты\n"
+    "<:peredat:1530362967239950397> — Передать владельца\n"
+    "<:changename:1530363133938368662> — Сменить название\n"
+    "<:skrit:1530363423026581524> — Скрыть комнату\n\n"
+    "<:otkrit:1530363462302175272> — Показать комнату\n"
+    "<:roomlimit:1530363527930314892> — Установить лимит\n"
+    "<:zabratdostup:1530363599317504071> — Забрать доступ\n\n"
+    "<:vidatdostup:1530363632272281690> — Выдать доступ\n\n"
     "-# Использовать их можно только когда у тебя есть приватный канал"
 )
 
@@ -457,14 +456,14 @@ def setup_temp_room_commands(bot, cursor):
 
         # --- Ряд 1 ---
 
-        @discord.ui.button(emoji="👤", style=ButtonStyle.secondary, custom_id="temprooms:limit", row=0)
+        @discord.ui.button(emoji="<:roomlimit:1530363527930314892>", style=ButtonStyle.secondary, custom_id="temprooms:limit", row=1)
         async def btn_limit(self, interaction: Interaction, button: Button):
             room, channel = await self._get_owner_room(interaction)
             if not room:
                 return
             await interaction.response.send_modal(SetLimitModal(channel.id))
 
-        @discord.ui.button(emoji="🔒", style=ButtonStyle.secondary, custom_id="temprooms:lock", row=0)
+        @discord.ui.button(emoji="<:lockroom:1530362658262351872>", style=ButtonStyle.secondary, custom_id="temprooms:lock", row=0)
         async def btn_lock(self, interaction: Interaction, button: Button):
             room, channel = await self._get_owner_room(interaction)
             if not room:
@@ -482,7 +481,7 @@ def setup_temp_room_commands(bot, cursor):
             await cursor.execute('UPDATE temp_rooms SET is_locked = TRUE WHERE voice_channel_id = $1', channel.id)
             await interaction.response.send_message(embed=ok_embed(f"Комната **{channel.name}** закрыта — заходить могут только те, кому выдан доступ."), ephemeral=True)
 
-        @discord.ui.button(emoji="🔓", style=ButtonStyle.secondary, custom_id="temprooms:unlock", row=0)
+        @discord.ui.button(emoji="<:unlockroom:1530362729863315516>", style=ButtonStyle.secondary, custom_id="temprooms:unlock", row=0)
         async def btn_unlock(self, interaction: Interaction, button: Button):
             room, channel = await self._get_owner_room(interaction)
             if not room:
@@ -493,7 +492,7 @@ def setup_temp_room_commands(bot, cursor):
             await cursor.execute('UPDATE temp_rooms SET is_locked = FALSE WHERE voice_channel_id = $1', channel.id)
             await interaction.response.send_message(embed=ok_embed(f"Комната **{channel.name}** открыта."), ephemeral=True)
 
-        @discord.ui.button(emoji="🚫", style=ButtonStyle.secondary, custom_id="temprooms:revoke", row=0)
+        @discord.ui.button(emoji="<:zabratdostup:1530363599317504071>", style=ButtonStyle.secondary, custom_id="temprooms:revoke", row=1)
         async def btn_revoke(self, interaction: Interaction, button: Button):
             room, channel = await self._get_owner_room(interaction)
             if not room:
@@ -502,7 +501,7 @@ def setup_temp_room_commands(bot, cursor):
             view = AccessUserSelectView(channel.id, room.owner_id, 'revoke')
             await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
-        @discord.ui.button(emoji="✅", style=ButtonStyle.secondary, custom_id="temprooms:grant", row=0)
+        @discord.ui.button(emoji="<:vidatdostup:1530363632272281690>", style=ButtonStyle.secondary, custom_id="temprooms:grant", row=1)
         async def btn_grant(self, interaction: Interaction, button: Button):
             room, channel = await self._get_owner_room(interaction)
             if not room:
@@ -513,7 +512,7 @@ def setup_temp_room_commands(bot, cursor):
 
         # --- Ряд 2 ---
 
-        @discord.ui.button(emoji="✏️", style=ButtonStyle.secondary, custom_id="temprooms:rename", row=1)
+        @discord.ui.button(emoji="<:changename:1530363133938368662>", style=ButtonStyle.secondary, custom_id="temprooms:rename", row=0)
         async def btn_rename(self, interaction: Interaction, button: Button):
             room, channel = await self._get_owner_room(interaction)
             if not room:
@@ -535,7 +534,7 @@ def setup_temp_room_commands(bot, cursor):
 
             await interaction.response.send_modal(RenameRoomModal(channel.id))
 
-        @discord.ui.button(emoji="👑", style=ButtonStyle.secondary, custom_id="temprooms:transfer", row=1)
+        @discord.ui.button(emoji="<:peredat:1530362967239950397>", style=ButtonStyle.secondary, custom_id="temprooms:transfer", row=0)
         async def btn_transfer(self, interaction: Interaction, button: Button):
             room, channel = await self._get_owner_room(interaction)
             if not room:
@@ -548,7 +547,7 @@ def setup_temp_room_commands(bot, cursor):
             view = MemberActionSelectView(channel.id, room.owner_id, 'transfer', members)
             await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
-        @discord.ui.button(emoji="👢", style=ButtonStyle.secondary, custom_id="temprooms:kick", row=1)
+        @discord.ui.button(emoji="<:kickroom:1530362848776294622>", style=ButtonStyle.secondary, custom_id="temprooms:kick", row=0)
         async def btn_kick(self, interaction: Interaction, button: Button):
             room, channel = await self._get_owner_room(interaction)
             if not room:
@@ -563,7 +562,7 @@ def setup_temp_room_commands(bot, cursor):
 
         # --- Ряд 3 ---
 
-        @discord.ui.button(emoji="🙈", style=ButtonStyle.secondary, custom_id="temprooms:hide", row=1)
+        @discord.ui.button(emoji="<:skrit:1530363423026581524>", style=ButtonStyle.secondary, custom_id="temprooms:hide", row=1)
         async def btn_hide(self, interaction: Interaction, button: Button):
             room, channel = await self._get_owner_room(interaction)
             if not room:
@@ -574,7 +573,7 @@ def setup_temp_room_commands(bot, cursor):
             await cursor.execute('UPDATE temp_rooms SET is_hidden = TRUE WHERE voice_channel_id = $1', channel.id)
             await interaction.response.send_message(embed=ok_embed(f"Комната **{channel.name}** скрыта из списка каналов."), ephemeral=True)
 
-        @discord.ui.button(emoji="👁️", style=ButtonStyle.secondary, custom_id="temprooms:show", row=1)
+        @discord.ui.button(emoji="<:otkrit:1530363462302175272>", style=ButtonStyle.secondary, custom_id="temprooms:show", row=1)
         async def btn_show(self, interaction: Interaction, button: Button):
             room, channel = await self._get_owner_room(interaction)
             if not room:
