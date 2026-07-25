@@ -1481,7 +1481,7 @@ def setup_room_commands(bot, cursor, CATEGORY_ID, restricted_role_id):
         (в отличие от «Исключить», которая снимает роль/членство в комнате)."""
 
         def __init__(self, owner_role_id, parent_view):
-            super().__init__(label="Выгнать", style=ButtonStyle.secondary, emoji="<:xrestik:1526013747112448090>", row=0)
+            super().__init__(label="Выгнать", style=ButtonStyle.secondary, emoji="<:privatekick:1530375912263254128>", row=0)
             self.owner_role_id = owner_role_id
             self.parent_view = parent_view
 
