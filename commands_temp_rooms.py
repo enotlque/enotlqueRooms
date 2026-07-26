@@ -491,6 +491,13 @@ def setup_temp_room_commands(bot, cursor):
             room, channel = await self._get_owner_room(interaction)
             if not room:
                 return
+            others = [m for m in channel.members if not m.bot and m.id != room.owner_id]
+            if not others:
+                await interaction.response.send_message(
+                    embed=error_embed("Нельзя скрыть комнату, пока в ней кроме вас никого нет."),
+                    ephemeral=True
+                )
+                return
             await safe_discord_call(lambda: channel.set_permissions(
                 interaction.guild.default_role, view_channel=False, reason="Комната скрыта владельцем"
             ))
