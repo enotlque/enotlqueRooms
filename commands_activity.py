@@ -4,6 +4,7 @@ import asyncio
 
 TICK_INTERVAL = 60      # секунд между тиками учёта войса (1 минута)
 FLUSH_INTERVAL = 600    # секунд между флашами в БД (10 минут)
+HOUR_INCREMENT = TICK_INTERVAL / 3600  # доля часа за один тик (без округления - копим "сырое" значение)
 
 # --- глобальное состояние модуля -------------------------------------------------
 
@@ -71,8 +72,6 @@ def _snapshot_guild_voice_state(bot: commands.Bot):
 
 @tasks.loop(seconds=TICK_INTERVAL)
 async def voice_tick():
-    increment = round(TICK_INTERVAL / 3600, 6)  # 0.016667 -> 6 знаков
-    
     # Берём снэпшот состояния войса под блокировкой
     async with _voice_members_lock:
         members_snapshot = dict(_voice_members)
@@ -88,9 +87,12 @@ async def voice_tick():
         return
     
     # Обновляем накопители под блокировкой
+    # Округление НЕ делаем здесь - иначе погрешность накапливается на каждом тике
+    # (за FLUSH_INTERVAL это 10 округлений подряд вместо одного). Копим "сырое"
+    # значение, округляем один раз непосредственно перед записью в БД.
     async with _pending_lock:
         for uid in eligible_users:
-            _pending_hours[uid] = round(_pending_hours.get(uid, 0.0) + increment, 2)
+            _pending_hours[uid] = _pending_hours.get(uid, 0.0) + HOUR_INCREMENT
 
 
 @tasks.loop(seconds=FLUSH_INTERVAL)
@@ -119,23 +121,28 @@ async def flush_activity():
         return
 
     rows = [
-        (hours_snapshot.get(uid, 0.0), messages_snapshot.get(uid, 0), uid)
+        (round(hours_snapshot.get(uid, 0.0), 2), messages_snapshot.get(uid, 0), uid)
         for uid in user_ids
     ]
 
     conn = None
     try:
         conn = await _get_connection()
-        await conn.executemany(
-            '''
-            INSERT INTO user_profiles (user_id, voice_hours, messages_count)
-            VALUES ($3, $1, $2)
-            ON CONFLICT (user_id) DO UPDATE
-            SET voice_hours = user_profiles.voice_hours + EXCLUDED.voice_hours,
-                messages_count = user_profiles.messages_count + EXCLUDED.messages_count
-            ''',
-            rows
-        )
+        # Транзакция обязательна: executemany сам по себе не атомарен,
+        # и без неё при обрыве соединения посреди батча часть строк успела бы
+        # закоммититься, а мы всё равно вернули бы их в _pending и задвоили
+        # при следующем успешном флаше.
+        async with conn.transaction():
+            await conn.executemany(
+                '''
+                INSERT INTO user_profiles (user_id, voice_hours, messages_count)
+                VALUES ($3, $1, $2)
+                ON CONFLICT (user_id) DO UPDATE
+                SET voice_hours = user_profiles.voice_hours + EXCLUDED.voice_hours,
+                    messages_count = user_profiles.messages_count + EXCLUDED.messages_count
+                ''',
+                rows
+            )
         print(f"✅ Activity flush: {len(rows)} пользователей обновлено")
     except Exception as e:
         # Возвращаем данные в буфер (под блокировкой)
