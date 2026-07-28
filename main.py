@@ -95,7 +95,6 @@ async def init_db_pool():
                     balance INTEGER DEFAULT 0,
                     last_daily_claimed TEXT,
                     last_work_claimed TEXT,
-                    god_kissed TEXT DEFAULT '—',
                     voice_hours NUMERIC(10,2) DEFAULT 0,
                     displayed_role TEXT,
                     displayed_room TEXT,
