@@ -105,7 +105,17 @@ def start_room_expiry_task(bot, cursor):
                     print(f"❌ Ошибка автопродления комнаты '{room_name}': {e}")
                 continue
 
-            # Средств в банке не хватает — комната удаляется
+            # Средств в банке не хватает — комната удаляется.
+            # Сначала убираем запись из БД, потом Discord-объекты.
+            # Иначе on_room_role_delete / on_room_channel_delete увидят ещё
+            # живую запись и залогируют ложное «удалено вручную».
+            try:
+                await cursor.execute('DELETE FROM room_leadership WHERE leader_id = $1', leader_id)
+                print(f"🗑️ Комната '{room_name}' автоматически удалена: истёк срок действия, банк пуст")
+            except Exception as e:
+                print(f"❌ Ошибка удаления комнаты '{room_name}' из БД: {e}")
+                continue
+
             for guild in bot.guilds:
                 role = guild.get_role(role_id) if role_id else None
                 if role:
@@ -139,13 +149,6 @@ def start_room_expiry_task(bot, cursor):
                         )
                     except Exception:
                         pass
-
-            try:
-                await cursor.execute('DELETE FROM room_leadership WHERE leader_id = $1', leader_id)
-                print(f"🗑️ Комната '{room_name}' автоматически удалена: истёк срок действия, банк пуст")
-            except Exception as e:
-                print(f"❌ Ошибка удаления комнаты '{room_name}' из БД: {e}")
-                continue
 
             owner = bot.get_user(leader_id)
             if owner:
