@@ -234,11 +234,12 @@ def setup_temp_room_commands(bot, cursor):
                 )
                 return
 
+            await interaction.response.defer(ephemeral=True)
             await safe_discord_call(lambda: channel.edit(user_limit=limit, reason="Изменение лимита участников владельцем комнаты"))
             await cursor.execute('UPDATE temp_rooms SET user_limit = $1 WHERE voice_channel_id = $2', limit, self.channel_id)
 
             limit_text = "без ограничений" if limit == 0 else str(limit)
-            await interaction.response.send_message(embed=ok_embed(f"Лимит участников установлен: **{limit_text}**."), ephemeral=True)
+            await interaction.followup.send(embed=ok_embed(f"Лимит участников установлен: **{limit_text}**."), ephemeral=True)
 
     class RenameRoomModal(Modal, title="Название комнаты"):
         def __init__(self, channel_id):
@@ -263,11 +264,12 @@ def setup_temp_room_commands(bot, cursor):
                 await interaction.response.send_message(embed=error_embed("Название не может быть пустым."), ephemeral=True)
                 return
 
+            await interaction.response.defer(ephemeral=True)
             try:
                 await safe_discord_call(lambda: channel.edit(name=new_name, reason="Смена названия комнаты владельцем"))
             except discord.HTTPException as e:
                 if e.status == 429:
-                    await interaction.response.send_message(
+                    await interaction.followup.send(
                         embed=error_embed("Discord временно ограничивает смену названия канала. Попробуйте чуть позже."),
                         ephemeral=True
                     )
@@ -278,7 +280,7 @@ def setup_temp_room_commands(bot, cursor):
                 'UPDATE temp_rooms SET last_rename = $1 WHERE voice_channel_id = $2',
                 datetime.now().strftime(DATE_FORMAT), self.channel_id
             )
-            await interaction.response.send_message(embed=ok_embed(f"Комната переименована в **{new_name}**."), ephemeral=True)
+            await interaction.followup.send(embed=ok_embed(f"Комната переименована в **{new_name}**."), ephemeral=True)
 
     # ============================================
     # ВЫБОР ЛЮБОГО ПОЛЬЗОВАТЕЛЯ СЕРВЕРА (доступ выдать/забрать)
@@ -469,22 +471,26 @@ def setup_temp_room_commands(bot, cursor):
                     ephemeral=True
                 )
                 return
+            # Сразу подтверждаем interaction (лимит Discord — 3с), иначе при
+            # медленном set_permissions получаем «приложение не ответило вовремя».
+            await interaction.response.defer(ephemeral=True)
             await safe_discord_call(lambda: channel.set_permissions(
                 interaction.guild.default_role, connect=False, reason="Комната закрыта владельцем"
             ))
             await cursor.execute('UPDATE temp_rooms SET is_locked = TRUE WHERE voice_channel_id = $1', channel.id)
-            await interaction.response.send_message(embed=ok_embed(f"Комната **{channel.name}** закрыта — заходить могут только те, кому выдан доступ."), ephemeral=True)
+            await interaction.followup.send(embed=ok_embed(f"Комната **{channel.name}** закрыта — заходить могут только те, кому выдан доступ."), ephemeral=True)
 
         @discord.ui.button(emoji="<:unlockroom:1530362729863315516>", style=ButtonStyle.secondary, custom_id="temprooms:unlock", row=0)
         async def btn_unlock(self, interaction: Interaction, button: Button):
             room, channel = await self._get_owner_room(interaction)
             if not room:
                 return
+            await interaction.response.defer(ephemeral=True)
             await safe_discord_call(lambda: channel.set_permissions(
                 interaction.guild.default_role, connect=True, reason="Комната открыта владельцем"
             ))
             await cursor.execute('UPDATE temp_rooms SET is_locked = FALSE WHERE voice_channel_id = $1', channel.id)
-            await interaction.response.send_message(embed=ok_embed(f"Комната **{channel.name}** открыта."), ephemeral=True)
+            await interaction.followup.send(embed=ok_embed(f"Комната **{channel.name}** открыта."), ephemeral=True)
 
         @discord.ui.button(emoji="<:skrit:1530363423026581524>", style=ButtonStyle.secondary, custom_id="temprooms:hide", row=0)
         async def btn_hide(self, interaction: Interaction, button: Button):
@@ -498,22 +504,24 @@ def setup_temp_room_commands(bot, cursor):
                     ephemeral=True
                 )
                 return
+            await interaction.response.defer(ephemeral=True)
             await safe_discord_call(lambda: channel.set_permissions(
                 interaction.guild.default_role, view_channel=False, reason="Комната скрыта владельцем"
             ))
             await cursor.execute('UPDATE temp_rooms SET is_hidden = TRUE WHERE voice_channel_id = $1', channel.id)
-            await interaction.response.send_message(embed=ok_embed(f"Комната **{channel.name}** скрыта из списка каналов."), ephemeral=True)
+            await interaction.followup.send(embed=ok_embed(f"Комната **{channel.name}** скрыта из списка каналов."), ephemeral=True)
 
         @discord.ui.button(emoji="<:otkrit:1530363462302175272>", style=ButtonStyle.secondary, custom_id="temprooms:show", row=0)
         async def btn_show(self, interaction: Interaction, button: Button):
             room, channel = await self._get_owner_room(interaction)
             if not room:
                 return
+            await interaction.response.defer(ephemeral=True)
             await safe_discord_call(lambda: channel.set_permissions(
                 interaction.guild.default_role, view_channel=True, reason="Комната показана владельцем"
             ))
             await cursor.execute('UPDATE temp_rooms SET is_hidden = FALSE WHERE voice_channel_id = $1', channel.id)
-            await interaction.response.send_message(embed=ok_embed(f"Комната **{channel.name}** снова видна всем."), ephemeral=True)
+            await interaction.followup.send(embed=ok_embed(f"Комната **{channel.name}** снова видна всем."), ephemeral=True)
 
         @discord.ui.button(emoji="<:roomlimit:1530363527930314892>", style=ButtonStyle.secondary, custom_id="temprooms:limit", row=0)
         async def btn_limit(self, interaction: Interaction, button: Button):
