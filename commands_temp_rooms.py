@@ -22,8 +22,8 @@ DATE_FORMAT = "%d.%m.%Y %H:%M:%S"
 # --- Кэш конфига системы temp_rooms по guild_id (экономит запросы к БД) ---
 _config_cache = {}
 
-# user_id -> timestamp последнего успешного создания комнаты (только RAM, после рестарта сбрасывается)
-_create_cooldowns: dict = {}
+# user_id -> timestamp последнего успешного создания (RAM, сбрасывается при рестарте)
+_create_cooldowns = {}
 
 _locks = {}
 
@@ -444,6 +444,7 @@ def setup_temp_room_commands(bot, cursor):
     # ============================================
     # После рестарта нужен bot.add_view с теми же custom_id.
     # «Не ответило вовремя» = нет response за 3с → defer ДО БД/API.
+    # restore вешаем на on_ready (не bot.loop.create_task из sync setup).
 
     class TempRoomPanelView(View):
         def __init__(self):
@@ -629,10 +630,16 @@ def setup_temp_room_commands(bot, cursor):
     bot.add_view(TempRoomPanelView())
     print("✅ TempRoomPanelView зарегистрирован (persistent, custom_id=temprooms:*)")
 
+    _panel_restore_done = False
+
     async def restore_panel_messages():
-        """После ready: перепривязывает view к панели из БД; если сообщение
-        удалено — создаёт новое и обновляет panel_message_id."""
-        await bot.wait_until_ready()
+        """on_ready: перепривязывает view к панели из БД; если сообщение
+        удалено — создаёт новое. Не используем bot.loop.create_task из sync setup."""
+        nonlocal _panel_restore_done
+        if _panel_restore_done:
+            return
+        _panel_restore_done = True
+
         try:
             await cursor.execute(
                 'SELECT guild_id, settings_channel_id, panel_message_id FROM temp_rooms_config'
@@ -667,7 +674,7 @@ def setup_temp_room_commands(bot, cursor):
             except Exception as e:
                 print(f"❌ temp_rooms: ошибка restore панели guild {guild_id}: {e}")
 
-    bot.loop.create_task(restore_panel_messages())
+    bot.add_listener(restore_panel_messages, 'on_ready')
 
     # ============================================
     # СОЗДАНИЕ КОМНАТЫ ПРИ ВХОДЕ В ТРИГГЕР-КАНАЛ
@@ -690,7 +697,6 @@ def setup_temp_room_commands(bot, cursor):
             now_ts = datetime.now().timestamp()
             last_create = _create_cooldowns.get(member.id)
             if last_create is not None and (now_ts - last_create) < CREATE_COOLDOWN_SECONDS:
-                # Выкидываем из триггер-канала, чтобы не висел в «Создать»
                 try:
                     await safe_discord_call(lambda: member.move_to(None, reason="Кулдаун создания временной комнаты"))
                 except Exception:
@@ -701,6 +707,7 @@ def setup_temp_room_commands(bot, cursor):
             if category is None or not isinstance(category, discord.CategoryChannel):
                 return
 
+            # Название без эмодзи/символов: "Комната <ник игрока>"
             room_name = f"Комната {member.display_name}"[:100]
 
             try:
@@ -716,8 +723,10 @@ def setup_temp_room_commands(bot, cursor):
                 print(f"❌ Ошибка создания временной комнаты для {member}: {e}")
                 return
 
-            # Пишем в БД ДО move_to: при мгновенном дисконнекте on_voice_state_update
-            # уже увидит запись и подчистит канал, а не оставит «сироту».
+            # Пишем комнату в БД ДО перемещения участника: если пользователь
+            # моментально отключится (обрыв связи), событие выхода уже найдёт
+            # запись комнаты в temp_rooms и корректно её подчистит — вместо
+            # того, чтобы канал остался физически "осиротевшим" без записи.
             try:
                 await cursor.execute('''
                     INSERT INTO temp_rooms (voice_channel_id, guild_id, owner_id, user_limit, is_locked, is_hidden, created_at, last_rename)
