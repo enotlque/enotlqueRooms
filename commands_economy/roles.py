@@ -82,7 +82,16 @@ def start_role_expiry_task(bot):
             if expiration > now:
                 continue  # Роль ещё активна
 
-            # Ищем реальный объект роли на сервере
+            # Сначала убираем запись из БД, потом удаляем роль на сервере.
+            # Иначе on_guild_role_delete увидит ещё живую запись и отправит
+            # ложное уведомление «удалена вручную» поверх авто-уведомления.
+            try:
+                await cursor.execute("DELETE FROM roles WHERE role_name = $1", role_name)
+                print(f"🗑️ Роль '{role_name}' автоматически удалена: истёк срок действия")
+            except Exception as e:
+                print(f"❌ Ошибка удаления роли '{role_name}' из БД: {e}")
+                continue
+
             discord_role = None
             for guild in bot.guilds:
                 discord_role = get(guild.roles, name=role_name)
@@ -98,13 +107,6 @@ def start_role_expiry_task(bot):
                     )
                 except Exception as e:
                     print(f"❌ Не удалось удалить роль '{role_name}' на сервере: {e}")
-
-            try:
-                await cursor.execute("DELETE FROM roles WHERE role_name = $1", role_name)
-                print(f"🗑️ Роль '{role_name}' автоматически удалена: истёк срок действия")
-            except Exception as e:
-                print(f"❌ Ошибка удаления роли '{role_name}' из БД: {e}")
-                continue
 
             if id_owner_now:
                 owner = bot.get_user(id_owner_now)
