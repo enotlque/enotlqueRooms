@@ -368,22 +368,21 @@ async def monitoring_off(interaction: Interaction):
 
 
 def setup_monitoring(bot, db_cursor):
-    """Вызывать из main.py"""
+    """Вызывать из main.py (регистрация команды)."""
     set_bot(bot)
     set_cursor(db_cursor)
     bot.tree.add_command(monitoring_group)
 
-    # При старте бота — если система была включена, возобновляем задачу
-    async def _resume():
-        await bot.wait_until_ready()
-        await asyncio.sleep(3)
-        try:
-            await cursor.execute(
-                "SELECT enabled FROM server_life_config WHERE enabled = TRUE LIMIT 1"
-            )
-            if cursor.fetchone():
-                start_monitoring_task()
-        except Exception as e:
-            print(f"[monitoring] Не удалось возобновить задачу: {e}")
 
-    bot.loop.create_task(_resume())
+async def resume_monitoring_if_needed():
+    """Вызывать из on_ready — возобновляет задачу, если мониторинг был включён."""
+    try:
+        await asyncio.sleep(2)
+        await cursor.execute(
+            "SELECT enabled FROM server_life_config WHERE enabled = TRUE LIMIT 1"
+        )
+        if cursor.fetchone():
+            start_monitoring_task()
+            print("✅ Мониторинг «Жизнь сервера» возобновлён после рестарта")
+    except Exception as e:
+        print(f"[monitoring] Не удалось возобновить задачу: {e}")
