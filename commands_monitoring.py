@@ -5,7 +5,7 @@ import asyncio
 from typing import Optional
 
 # ================== НАСТРОЙКИ (легко менять) ==================
-UPDATE_INTERVAL = 60          # секунд (для теста). Боевой режим: 15 * 60
+UPDATE_INTERVAL = 60 * 15      # секунд (для теста). Боевой режим: 15 * 60
 MAX_EVENTS = 7
 MAX_EXPIRING = 7
 MAX_STORED_EVENTS = 30       # сколько событий максимум хранить в БД (старые удаляются)
