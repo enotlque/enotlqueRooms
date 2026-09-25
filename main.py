@@ -161,6 +161,37 @@ async def init_db_pool():
                 )
             ''')
             print("✅ Таблица temp_rooms создана/проверена")
+
+            # Таблица событий для «Жизнь сервера»
+            await conn.execute('''
+                CREATE TABLE IF NOT EXISTS economy_events (
+                    id SERIAL PRIMARY KEY,
+                    event_type TEXT NOT NULL,
+                    user_id BIGINT,
+                    target_user_id BIGINT,
+                    item_name TEXT,
+                    item_id BIGINT,
+                    amount INTEGER,
+                    created_at TIMESTAMPTZ DEFAULT NOW()
+                )
+            ''')
+            print("✅ Таблица economy_events создана/проверена")
+
+            await conn.execute('''
+                CREATE INDEX IF NOT EXISTS idx_economy_events_created_at
+                ON economy_events (created_at DESC)
+            ''')
+
+            # Конфиг мониторинга «Жизнь сервера»
+            await conn.execute('''
+                CREATE TABLE IF NOT EXISTS server_life_config (
+                    id SERIAL PRIMARY KEY,
+                    enabled BOOLEAN DEFAULT FALSE,
+                    channel_id BIGINT,
+                    message_id BIGINT
+                )
+            ''')
+            print("✅ Таблица server_life_config создана/проверена")
             
     finally:
         socket.getaddrinfo = original_getaddrinfo
@@ -281,6 +312,9 @@ setup_staff_commands(bot, cursor)
 setup_activity_tracking(bot, cursor, get_db_connection, release_db_connection)
 setup_role_delete_listener(bot)
 setup_temp_room_commands(bot, cursor)
+
+from commands_monitoring import setup_monitoring
+setup_monitoring(bot, cursor)
 
 
 # === ON_READY ===
