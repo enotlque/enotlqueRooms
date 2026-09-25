@@ -24,6 +24,7 @@ from rate_limiter import safe_discord_call
 
 from . import common
 from .common import create_embed, format_timedelta, get_user_balance, subtract_user_balance
+from commands_monitoring import log_event
 
 # ============================================
 # ЗАЩИТА ОТ ГОНКИ ПРИ СОЗДАНИИ РОЛИ
@@ -86,6 +87,7 @@ def start_role_expiry_task(bot):
             # Иначе on_guild_role_delete увидит ещё живую запись и отправит
             # ложное уведомление «удалена вручную» поверх авто-уведомления.
             try:
+                await log_event("role_expire", user_id=id_owner_now, item_name=role_name)
                 await cursor.execute("DELETE FROM roles WHERE role_name = $1", role_name)
                 print(f"🗑️ Роль '{role_name}' автоматически удалена: истёк срок действия")
             except Exception as e:
@@ -348,6 +350,8 @@ async def _create_role_impl(interaction: discord.Interaction, название: 
         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
     """, название, f"#{цвет}", interaction.user.id, interaction.user.id,
         creation_date_str, expiration_date_str, 0, None, None, None)
+
+    await log_event("role_create", user_id=interaction.user.id, item_name=название, item_id=role.id)
 
     embed = discord.Embed(
         description="Вы успешно приобрели роль на `30 д`",
@@ -693,6 +697,16 @@ class ExtendRoleModal(Modal):
         await cursor.execute("UPDATE roles SET expiration_date = $1, extend_date = $2, allcoinsend_on_role = allcoinsend_on_role + $3 WHERE role_name = $4", 
                            new_expiration_date.strftime("%d.%m.%Y в %Hч %Mм %Sс"), datetime.now().strftime("%d.%m.%Y в %Hч %Mм %Sс"), cost_of_extension, self.role_name)
         await subtract_user_balance(cursor, self.user_id, cost_of_extension)
+
+        # Лог для «Жизнь сервера»
+        role_obj = discord.utils.get(interaction.guild.roles, name=self.role_name) if interaction.guild else None
+        await log_event(
+            "role_extend",
+            user_id=self.user_id,
+            item_name=self.role_name,
+            item_id=role_obj.id if role_obj else None,
+            amount=cost_of_extension,
+        )
         
         await interaction.response.send_message(f"Роль {self.role_name} успешно продлена на {actual_days_extended} дней за {cost_of_extension} монет!", ephemeral=True)
 
@@ -1087,6 +1101,15 @@ class RoleGiveAcceptView(ui.View):
 
             await cursor.execute("UPDATE roles SET id_owner_now = $1 WHERE role_name = $2", self.получатель.id, self.role_name)
             await safe_discord_call(lambda: self.получатель.add_roles(self.role_obj))
+
+            await log_event(
+                "role_transfer",
+                user_id=self.sender.id,
+                target_user_id=self.получатель.id,
+                item_name=self.role_name,
+                item_id=self.role_obj.id if self.role_obj else None,
+                amount=self.сумма if self.сумма > 0 else None,
+            )
 
             if self.сумма > 0:
                 await cursor.execute("UPDATE user_profiles SET balance = balance + $1 WHERE user_id = $2", self.сумма, self.sender.id)
