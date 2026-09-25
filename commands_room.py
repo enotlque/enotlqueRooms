@@ -12,6 +12,7 @@ from discord import Embed, Interaction, Member
 from discord.ext import commands, tasks
 import time
 import random
+from commands_monitoring import log_event
 
 
 # Создаем объект intents и устанавливаем нужные параметры
@@ -100,6 +101,7 @@ def start_room_expiry_task(bot, cursor):
                         'UPDATE room_leadership SET expiration_date = $1, room_balance = room_balance - $2, extend_date = $3 WHERE leader_id = $4',
                         new_expiration_str, cost, now.strftime(ROOM_DATE_FORMAT), leader_id
                     )
+                    await log_event("room_extend", user_id=leader_id, item_name=room_name, item_id=voice_channel_id, amount=cost)
                     print(f"✅ Комната '{room_name}' автопродлена на {days_to_add} дн. (списано {cost} из банка комнаты)")
                 except Exception as e:
                     print(f"❌ Ошибка автопродления комнаты '{room_name}': {e}")
@@ -110,6 +112,7 @@ def start_room_expiry_task(bot, cursor):
             # Иначе on_room_role_delete / on_room_channel_delete увидят ещё
             # живую запись и залогируют ложное «удалено вручную».
             try:
+                await log_event("room_expire", user_id=leader_id, item_name=room_name, item_id=voice_channel_id)
                 await cursor.execute('DELETE FROM room_leadership WHERE leader_id = $1', leader_id)
                 print(f"🗑️ Комната '{room_name}' автоматически удалена: истёк срок действия, банк пуст")
             except Exception as e:
@@ -491,6 +494,8 @@ def setup_room_commands(bot, cursor, CATEGORY_ID, restricted_role_id):
                 room_balance
             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
         ''', участник.id, комната, role.id, text_channel.id, voice_channel.id, creation_date_str, expiration_date_str, 0)
+
+        await log_event("room_create", user_id=участник.id, item_name=комната, item_id=voice_channel.id)
 
         # Выдача роли пользователю
         await safe_discord_call(lambda: участник.add_roles(role))
