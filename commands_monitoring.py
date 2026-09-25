@@ -6,14 +6,14 @@ import asyncio
 from typing import Optional
 
 # ================== НАСТРОЙКИ (легко менять) ==================
-UPDATE_INTERVAL = 60          # секунд (для теста). Боевой режим: 15 * 60
+UPDATE_INTERVAL = 15 * 60          # секунд (для теста). Боевой режим: 15 * 60
 MAX_EVENTS = 7
 MAX_EXPIRING = 7
 
 COUNTER_EMOJIS = {
-    "marriages": "💍",
-    "roles": "🎭",
-    "rooms": "🏠",
+    "marriages": "<:monheart:1553055709401321652>",
+    "roles": "<a:monorb:1553057449190236300>",
+    "rooms": "<:monroom:1553055708075786330>",
 }
 
 # Цвет эмбеда (как в остальном боте)
