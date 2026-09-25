@@ -23,6 +23,7 @@ from commands_profile import create_profile_image, get_active_role_names, get_me
 
 from . import common
 from .common import create_embed, format_timedelta, get_user_balance, subtract_user_balance
+from commands_monitoring import log_event
 
 
 # ============================================
@@ -284,6 +285,8 @@ async def marry(interaction: discord.Interaction, пользователь: disc
                     VALUES ($1, $2, $3, $4, $5, $6, $7)
                 ''', interaction.user.id, пользователь.id, 0, created_at, created_at, expires_at, voice_channel.id)
 
+                await log_event("marriage", user_id=interaction.user.id, target_user_id=пользователь.id)
+
                 # Монеты уже были списаны при отправке предложения, 
                 # поэтому НЕ списываем их повторно!
 
@@ -469,6 +472,7 @@ def start_marriage_expiry_task(bot):
                         'WHERE user1_id = $4 AND user2_id = $5',
                         new_expires_at, cost, now.isoformat(), user1_id, user2_id
                     )
+                    await log_event("marriage_renew", user_id=user1_id, target_user_id=user2_id, amount=cost)
                     print(f"✅ Брак {user1_id}-{user2_id} автопродлён на {days_to_add} дн. (списано {cost} с общего баланса)")
                 except Exception as e:
                     print(f"❌ Ошибка автопродления брака {user1_id}-{user2_id}: {e}")
@@ -483,6 +487,7 @@ def start_marriage_expiry_task(bot):
                         print(f"❌ Не удалось удалить голосовой канал брака {user1_id}-{user2_id}: {e}")
 
             try:
+                await log_event("marriage_expire", user_id=user1_id, target_user_id=user2_id)
                 await cursor.execute('DELETE FROM marriages WHERE user1_id = $1 AND user2_id = $2', user1_id, user2_id)
                 print(f"💔 Брак {user1_id}-{user2_id} автоматически расторгнут: не хватило средств на продление")
             except Exception as e:
