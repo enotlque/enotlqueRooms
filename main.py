@@ -313,7 +313,7 @@ setup_activity_tracking(bot, cursor, get_db_connection, release_db_connection)
 setup_role_delete_listener(bot)
 setup_temp_room_commands(bot, cursor)
 
-from commands_monitoring import setup_monitoring
+from commands_monitoring import setup_monitoring, resume_monitoring_if_needed
 setup_monitoring(bot, cursor)
 
 
@@ -347,6 +347,9 @@ async def on_ready():
 
     start_temp_room_cleanup_task(bot, cursor)
     print('✅ Задача очистки временных комнат запущена')
+
+    # Возобновление «Жизнь сервера», если было включено до рестарта
+    await resume_monitoring_if_needed()
 
     await asyncio.sleep(5)
     
