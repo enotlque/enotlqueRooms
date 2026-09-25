@@ -221,12 +221,12 @@ async def build_embed() -> Embed:
     # ----- Собираем описание -----
     description = (
         f"{counters_block}\n\n"
-        f"**Недавние события**\n{events_block}\n\n"
+        f"**Недавние**\n{events_block}\n\n"
         f"**Скоро истекает**\n{expiring_block}"
     )
 
     embed = Embed(description=description, color=EMBED_COLOR)
-    embed.set_author(name="Жизнь сервера")
+    embed.set_author(name="Журнал событий")
     embed.set_footer(text=f"Обновлено • интервал {UPDATE_INTERVAL} сек")
     embed.timestamp = datetime.utcnow()
     return embed
