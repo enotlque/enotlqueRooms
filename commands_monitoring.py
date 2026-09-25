@@ -1,4 +1,3 @@
-# commands_monitoring.py
 import discord
 from discord import app_commands, Interaction, Embed
 from datetime import datetime
@@ -6,9 +5,10 @@ import asyncio
 from typing import Optional
 
 # ================== НАСТРОЙКИ (легко менять) ==================
-UPDATE_INTERVAL = 15 * 60          # секунд (для теста). Боевой режим: 15 * 60
+UPDATE_INTERVAL = 60          # секунд (для теста). Боевой режим: 15 * 60
 MAX_EVENTS = 7
 MAX_EXPIRING = 7
+MAX_STORED_EVENTS = 30       # сколько событий максимум хранить в БД (старые удаляются)
 
 COUNTER_EMOJIS = {
     "marriages": "<:monheart:1553055709401321652>",
@@ -49,7 +49,9 @@ async def log_event(
     item_id: Optional[int] = None,          # role_id или voice_channel_id
     amount: Optional[int] = None,
 ):
-    """Пишет событие в economy_events. Вызывать после успешного действия."""
+    """Пишет событие в economy_events. Вызывать после успешного действия.
+    После записи удаляет самые старые, чтобы в таблице было не больше MAX_STORED_EVENTS.
+    """
     if cursor is None:
         return
     try:
@@ -66,6 +68,18 @@ async def log_event(
             item_id,
             amount,
             datetime.utcnow(),
+        )
+        # Чистим хвост: оставляем только последние MAX_STORED_EVENTS записей
+        await cursor.execute(
+            """
+            DELETE FROM economy_events
+            WHERE id NOT IN (
+                SELECT id FROM economy_events
+                ORDER BY created_at DESC
+                LIMIT $1
+            )
+            """,
+            MAX_STORED_EVENTS,
         )
     except Exception as e:
         print(f"[monitoring] Ошибка логирования события {event_type}: {e}")
@@ -120,6 +134,7 @@ async def build_embed() -> Embed:
     counters_block = "\n".join(counters) if counters else "*Пока пусто*"
 
     # ----- Недавние события -----
+    # Берём с запасом, чтобы после сворачивания передач одной роли хватило на MAX_EVENTS
     await cursor.execute(
         """
         SELECT event_type, user_id, target_user_id, item_name, item_id, amount, created_at
@@ -127,12 +142,27 @@ async def build_embed() -> Embed:
         ORDER BY created_at DESC
         LIMIT $1
         """,
-        MAX_EVENTS,
+        MAX_EVENTS * 5,
     )
     rows = cursor.fetchall() or []
 
+    # Сворачиваем role_transfer одной и той же роли: оставляем только последнюю
+    # (rows уже отсортированы от новых к старым → первое вхождение = актуальное)
+    seen_role_transfers = set()
+    filtered_rows = []
+    for row in rows:
+        event_type, user_id, target_user_id, item_name, item_id, amount, created_at = row
+        if event_type == "role_transfer":
+            key = item_id if item_id is not None else item_name
+            if key in seen_role_transfers:
+                continue  # более старая передача этой же роли — пропускаем
+            seen_role_transfers.add(key)
+        filtered_rows.append(row)
+        if len(filtered_rows) >= MAX_EVENTS:
+            break
+
     events_lines = []
-    for event_type, user_id, target_user_id, item_name, item_id, amount, created_at in rows:
+    for event_type, user_id, target_user_id, item_name, item_id, amount, created_at in filtered_rows:
         ts = _ts(created_at) if isinstance(created_at, datetime) else ""
 
         u = f"<@{user_id}>" if user_id else "?"
@@ -221,12 +251,12 @@ async def build_embed() -> Embed:
     # ----- Собираем описание -----
     description = (
         f"{counters_block}\n\n"
-        f"**Недавние**\n{events_block}\n\n"
+        f"**Недавние события**\n{events_block}\n\n"
         f"**Скоро истекает**\n{expiring_block}"
     )
 
     embed = Embed(description=description, color=EMBED_COLOR)
-    embed.set_author(name="Журнал событий")
+    embed.set_author(name="Жизнь сервера")
     embed.set_footer(text=f"Обновлено • интервал {UPDATE_INTERVAL} сек")
     embed.timestamp = datetime.utcnow()
     return embed
