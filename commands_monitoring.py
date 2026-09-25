@@ -125,11 +125,11 @@ async def build_embed() -> Embed:
 
     counters = []
     if marriages_count > 0:
-        counters.append(f"{COUNTER_EMOJIS['marriages']} Браков: **{marriages_count}**")
+        counters.append(f"## {COUNTER_EMOJIS['marriages']} Браков: **{marriages_count}**")
     if roles_count > 0:
-        counters.append(f"{COUNTER_EMOJIS['roles']} Ролей: **{roles_count}**")
+        counters.append(f"## {COUNTER_EMOJIS['roles']} Ролей: **{roles_count}**")
     if rooms_count > 0:
-        counters.append(f"{COUNTER_EMOJIS['rooms']} Комнат: **{rooms_count}**")
+        counters.append(f"## {COUNTER_EMOJIS['rooms']} Комнат: **{rooms_count}**")
 
     counters_block = "\n".join(counters) if counters else "*Пока пусто*"
 
