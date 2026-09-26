@@ -9,7 +9,7 @@ import json
 from PIL import Image, ImageDraw, ImageFont
 
 # ================== НАСТРОЙКИ (легко менять) ==================
-UPDATE_INTERVAL = 60 * 15      # секунд (для теста). Боевой режим: 15 * 60
+UPDATE_INTERVAL = 15 * 60      # 15 минут
 MAX_EVENTS = 7
 MAX_EXPIRING = 7
 MAX_STORED_EVENTS = 30       # сколько событий максимум хранить в БД (старые удаляются)
@@ -36,11 +36,11 @@ FONT_REGULAR_PATH = "ProximaNova-Regular.ttf"
 # size — размер шрифта именно для этой цифры (места под них разное)
 NUM_POSITIONS = {
     # "0" между словами АКТИВНЫЕ / ПОКУПКИ, по центру щели, чуть ниже строки заголовка
-    "marriages": {"pos": (794, 345), "size": 80},
-    # цифра под буквой "М" в "Брачных рум:" — в зазоре перед следующей строкой
-    "rooms":     {"pos": (835, 520), "size": 64},
-    # цифра под буквой "М" в "Личных рум:" — в зазоре перед следующей строкой
-    "roles":     {"pos": (800, 670), "size": 64},
+    "marriages": {"pos": (819, 370), "size": 88},
+    # цифра под буквой "М" в "Брачных рум:" — ниже и немного правее
+    "rooms":     {"pos": (835, 545), "size": 72},
+    # цифра под буквой "М" в "Личных рум:" — ниже
+    "roles":     {"pos": (820, 695), "size": 72},
 }
 NUM_COLOR = (255, 255, 255)
 NUM_STROKE_WIDTH = 2  # толщина обводки, делает цифры визуально жирнее
@@ -335,7 +335,7 @@ async def _build_journal_text() -> str:
     text = (
         f"**Недавние события**\n{events_block}\n\n"
         f"**Скоро истекает**\n{expiring_block}\n\n"
-        f"-# Обновлено • интервал {UPDATE_INTERVAL} сек"
+        f"-# Обновлено • <t:{int(now.timestamp())}:R> • интервал 15мин"
     )
     return text
 
@@ -535,7 +535,7 @@ async def monitoring_on(interaction: Interaction, канал: discord.TextChanne
 
         start_monitoring_task()
         await interaction.followup.send(
-            f"Готово! Сообщение создано в {канал.mention} и будет обновляться каждые {UPDATE_INTERVAL} сек.",
+            f"Готово! Сообщение создано в {канал.mention} и будет обновляться каждые 15мин.",
             ephemeral=True,
         )
     except Exception as e:
