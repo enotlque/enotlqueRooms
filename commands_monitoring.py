@@ -394,11 +394,16 @@ async def _update_loop():
                 break
 
             components, file = await build_container_payload()
-            await message.edit(
-                attachments=[file],
-                components=components,
-                flags=IS_COMPONENTS_V2,
-            )
+            try:
+                await message.edit(
+                    attachments=[file],
+                    components=components,
+                    flags=IS_COMPONENTS_V2,
+                )
+            except TypeError:
+                # Библиотека не поддерживает components/flags в edit
+                await message.edit(attachments=[file])
+                print("[monitoring] edit() не принял components — обновил только картинку")
 
         except Exception as e:
             print(f"[monitoring] Ошибка обновления: {e}")
@@ -451,11 +456,49 @@ async def monitoring_on(interaction: Interaction, канал: discord.TextChanne
             return
 
         components, file = await build_container_payload()
-        msg = await канал.send(
-            files=[file],
-            components=components,
-            flags=IS_COMPONENTS_V2,
-        )
+
+        # ===== Отправка Components V2 =====
+        # Пробуем стандартный способ. Если библиотека ругается на
+        # keyword 'components' — используем прямой HTTP-запрос.
+        msg = None
+        try:
+            msg = await канал.send(
+                files=[file],
+                components=components,
+                flags=IS_COMPONENTS_V2,
+            )
+        except TypeError as te:
+            print(f"[monitoring] send() не принял components/flags: {te}")
+            print("[monitoring] Переходим на прямой HTTP-запрос...")
+
+            # Прямой запрос к API Discord
+            route = discord.http.Route(
+                "POST", "/channels/{channel_id}/messages", channel_id=канал.id
+            )
+
+            # Готовим multipart form с JSON + файлом
+            form = []
+            payload = {
+                "flags": IS_COMPONENTS_V2,
+                "components": components,
+            }
+            form.append({"name": "payload_json", "value": discord.utils.to_json(payload)})
+
+            # Файл
+            file.fp.seek(0)
+            form.append({
+                "name": "files[0]",
+                "value": file.fp,
+                "filename": file.filename,
+                "content_type": "image/png",
+            })
+
+            data = await bot_instance.http.request(route, form=form)
+            msg = канал._state.create_message(channel=канал, data=data)
+
+        if msg is None:
+            raise RuntimeError("Не удалось отправить сообщение")
+
         try:
             await msg.pin(reason="Жизнь сервера")
         except Exception:
