@@ -1,11 +1,10 @@
-import io
-import os
-
 import discord
-from discord import app_commands, Interaction
+from discord import app_commands, Interaction, File
 from datetime import datetime
 import asyncio
 from typing import Optional
+import io
+import os
 from PIL import Image, ImageDraw, ImageFont
 
 # ================== НАСТРОЙКИ (легко менять) ==================
@@ -14,38 +13,35 @@ MAX_EVENTS = 7
 MAX_EXPIRING = 7
 MAX_STORED_EVENTS = 30       # сколько событий максимум хранить в БД (старые удаляются)
 
-COUNTER_EMOJIS = {
-    "marriages": "<:monheart:1553055709401321652>",
-    "roles": "<a:monorb:1553057449190236300>",
-    "rooms": "<:monroom:1553055708075786330>",
+# Путь к баннеру (PNG с прозрачностью, круг выходит за края)
+BANNER_PATH = "monitoring_banner.png"
+
+# Шрифты (те же, что в профиле)
+FONT_BOLD_PATH = "ProximaNova-Bold.ttf"
+FONT_REGULAR_PATH = "ProximaNova-Regular.ttf"
+
+# Координаты чисел на баннере (2555x1041)
+# Подобраны под текущий макет: сразу после двоеточий
+NUM_POSITIONS = {
+    "marriages": (780, 310),   # Брачных рум:
+    "rooms":     (780, 470),   # Личных рум:
+    "roles":     (780, 630),   # Личных ролей:
 }
+NUM_FONT_SIZE = 56
+NUM_COLOR = (255, 255, 255)
 
-# Цвет эмбеда (как в остальном боте)
-EMBED_COLOR = 0x6e6e6e
+# Discord Components V2
+IS_COMPONENTS_V2 = 1 << 15  # 32768
 
-# Формат дат ролей/комнат
-ROLE_ROOM_DATE_FORMAT = "%d.%m.%Y в %Hч %Mм %Sс"
-
-# ================== КАРТИНКА СО СЧЁТЧИКАМИ (monitoring.png) ==================
-# Шаблон лежит в той же папке, что и PlaceholderProfile2.png (корень проекта)
-MONITORING_TEMPLATE_PATH = "monitoring.png"
-FONT_BOLD_PATH = "ProximaNova-Bold.ttf"  # тот же шрифт, что и в профиле
-
-# Координаты значений (откалиброваны по monitoring.png, точка — левый край
-# числа, по вертикали — центр строки, anchor="lm")
-COUNTER_VALUE_FONT_SIZE = 60
-COUNTER_VALUE_COLOR = (255, 255, 255)
-COUNTER_VALUE_POSITIONS = {
-    "marriages": (900, 428),   # строка "Брачных рум:"
-    "rooms": (830, 585),       # строка "Личных рум:"
-    "roles": (935, 723),       # строка "Личных ролей:"
-}
 # ==============================================================
 
 cursor = None
 bot_instance = None
 _update_task = None
 _is_running = False
+
+_BASIC_LAYOUT = getattr(ImageFont, "Layout", None)
+_BASIC_LAYOUT = _BASIC_LAYOUT.BASIC if _BASIC_LAYOUT else getattr(ImageFont, "LAYOUT_BASIC", 0)
 
 
 def set_cursor(c):
@@ -58,6 +54,13 @@ def set_bot(b):
     bot_instance = b
 
 
+def _load_font(path: str, size: int) -> ImageFont.FreeTypeFont:
+    if not os.path.exists(path):
+        # fallback
+        return ImageFont.load_default()
+    return ImageFont.truetype(path, size, layout_engine=_BASIC_LAYOUT)
+
+
 # ================== ЛОГИРОВАНИЕ СОБЫТИЙ ==================
 
 async def log_event(
@@ -65,7 +68,7 @@ async def log_event(
     user_id: Optional[int] = None,
     target_user_id: Optional[int] = None,
     item_name: Optional[str] = None,
-    item_id: Optional[int] = None,          # role_id или voice_channel_id
+    item_id: Optional[int] = None,
     amount: Optional[int] = None,
 ):
     """Пишет событие в economy_events. Вызывать после успешного действия.
@@ -88,7 +91,6 @@ async def log_event(
             amount,
             datetime.utcnow(),
         )
-        # Чистим хвост: оставляем только последние MAX_STORED_EVENTS записей
         await cursor.execute(
             """
             DELETE FROM economy_events
@@ -104,10 +106,64 @@ async def log_event(
         print(f"[monitoring] Ошибка логирования события {event_type}: {e}")
 
 
-# ================== ПОСТРОЕНИЕ ЭМБЕДА ==================
+# ================== ГЕНЕРАЦИЯ БАННЕРА С ЧИСЛАМИ ==================
+
+async def _get_counts() -> dict:
+    """Возвращает актуальные счётчики."""
+    await cursor.execute("SELECT COUNT(*) FROM marriages")
+    marriages_count = (cursor.fetchone() or [0])[0] or 0
+
+    await cursor.execute("SELECT COUNT(*) FROM roles WHERE archived = 0")
+    roles_count = (cursor.fetchone() or [0])[0] or 0
+
+    await cursor.execute("SELECT COUNT(*) FROM room_leadership")
+    rooms_count = (cursor.fetchone() or [0])[0] or 0
+
+    return {
+        "marriages": marriages_count,
+        "rooms": rooms_count,
+        "roles": roles_count,
+    }
+
+
+def _render_banner(counts: dict) -> io.BytesIO:
+    """Рисует числа на баннере и возвращает PNG с прозрачностью."""
+    base = Image.open(BANNER_PATH).convert("RGBA")
+    draw = ImageDraw.Draw(base)
+
+    try:
+        font = _load_font(FONT_BOLD_PATH, NUM_FONT_SIZE)
+    except Exception:
+        font = ImageFont.load_default()
+
+    for key, pos in NUM_POSITIONS.items():
+        value = str(counts.get(key, 0))
+        # Рисуем с лёгкой тенью для читаемости
+        shadow_offset = 2
+        draw.text(
+            (pos[0] + shadow_offset, pos[1] + shadow_offset),
+            value,
+            font=font,
+            fill=(0, 0, 0, 160),
+            anchor="lm",
+        )
+        draw.text(
+            pos,
+            value,
+            font=font,
+            fill=NUM_COLOR,
+            anchor="lm",
+        )
+
+    buf = io.BytesIO()
+    base.save(buf, format="PNG")
+    buf.seek(0)
+    return buf
+
+
+# ================== ПОСТРОЕНИЕ ТЕКСТА ЖУРНАЛА ==================
 
 def _ts(dt: datetime) -> str:
-    """Discord relative timestamp"""
     return f"<t:{int(dt.timestamp())}:R>"
 
 
@@ -115,7 +171,7 @@ def _parse_role_room_date(s: str):
     if not s or s == "-":
         return None
     try:
-        return datetime.strptime(s, ROLE_ROOM_DATE_FORMAT)
+        return datetime.strptime(s, "%d.%m.%Y в %Hч %Mм %Sс")
     except Exception:
         return None
 
@@ -129,67 +185,11 @@ def _parse_iso(s: str):
         return None
 
 
-# ================== ГЕНЕРАЦИЯ КАРТИНКИ ==================
-
-_BASIC_LAYOUT = getattr(ImageFont, "Layout", None)
-_BASIC_LAYOUT = _BASIC_LAYOUT.BASIC if _BASIC_LAYOUT else getattr(ImageFont, "LAYOUT_BASIC", 0)
-
-
-def _load_font(path: str, size: int) -> ImageFont.FreeTypeFont:
-    if not os.path.exists(path):
-        raise FileNotFoundError(
-            f"Шрифт '{path}' не найден. Положи файл '{path}' в корень проекта."
-        )
-    return ImageFont.truetype(path, size, layout_engine=_BASIC_LAYOUT)
-
-
-def create_monitoring_image(marriages_count: int, rooms_count: int, roles_count: int) -> io.BytesIO:
-    """Рисует счётчики поверх monitoring.png и возвращает PNG в буфере."""
-    if not os.path.exists(MONITORING_TEMPLATE_PATH):
-        raise FileNotFoundError(
-            f"Шаблон '{MONITORING_TEMPLATE_PATH}' не найден. "
-            f"Положи файл '{MONITORING_TEMPLATE_PATH}' в корень проекта."
-        )
-
-    base = Image.open(MONITORING_TEMPLATE_PATH).convert("RGBA")
-    draw = ImageDraw.Draw(base)
-    font = _load_font(FONT_BOLD_PATH, COUNTER_VALUE_FONT_SIZE)
-
-    values = {
-        "marriages": marriages_count,
-        "rooms": rooms_count,
-        "roles": roles_count,
-    }
-    for key, (x, y) in COUNTER_VALUE_POSITIONS.items():
-        draw.text((x, y), str(values.get(key, 0)), font=font, fill=COUNTER_VALUE_COLOR, anchor="lm")
-
-    buffer = io.BytesIO()
-    base.convert("RGB").save(buffer, format="PNG")
-    buffer.seek(0)
-    return buffer
-
-
-# ================== ПОСТРОЕНИЕ CV2-БЛОКА ==================
-
-async def build_monitoring_view():
-    """Возвращает (LayoutView, discord.File) — картинка со счётчиками сверху,
-    текстовые блоки (события/истечения) снизу, всё внутри одного Container."""
+async def _build_journal_text() -> str:
+    """Собирает текст «Недавние события» + «Скоро истекает»."""
     now = datetime.now()
 
-    # ----- Счётчики -----
-    await cursor.execute("SELECT COUNT(*) FROM marriages")
-    marriages_count = (cursor.fetchone() or [0])[0] or 0
-
-    await cursor.execute("SELECT COUNT(*) FROM roles WHERE archived = 0")
-    roles_count = (cursor.fetchone() or [0])[0] or 0
-
-    await cursor.execute("SELECT COUNT(*) FROM room_leadership")
-    rooms_count = (cursor.fetchone() or [0])[0] or 0
-
-    # (счётчики теперь рисуются прямо на monitoring.png, см. create_monitoring_image)
-
     # ----- Недавние события -----
-    # Берём с запасом, чтобы после сворачивания передач одной роли хватило на MAX_EVENTS
     await cursor.execute(
         """
         SELECT event_type, user_id, target_user_id, item_name, item_id, amount, created_at
@@ -201,8 +201,6 @@ async def build_monitoring_view():
     )
     rows = cursor.fetchall() or []
 
-    # Сворачиваем role_transfer одной и той же роли: оставляем только последнюю
-    # (rows уже отсортированы от новых к старым → первое вхождение = актуальное)
     seen_role_transfers = set()
     filtered_rows = []
     for row in rows:
@@ -210,7 +208,7 @@ async def build_monitoring_view():
         if event_type == "role_transfer":
             key = item_id if item_id is not None else item_name
             if key in seen_role_transfers:
-                continue  # более старая передача этой же роли — пропускаем
+                continue
             seen_role_transfers.add(key)
         filtered_rows.append(row)
         if len(filtered_rows) >= MAX_EVENTS:
@@ -219,7 +217,6 @@ async def build_monitoring_view():
     events_lines = []
     for event_type, user_id, target_user_id, item_name, item_id, amount, created_at in filtered_rows:
         ts = _ts(created_at) if isinstance(created_at, datetime) else ""
-
         u = f"<@{user_id}>" if user_id else "?"
         t = f"<@{target_user_id}>" if target_user_id else "?"
 
@@ -260,7 +257,6 @@ async def build_monitoring_view():
     # ----- Скоро истекает -----
     expiring = []
 
-    # Роли
     await cursor.execute(
         "SELECT role_name, id_owner_now, expiration_date FROM roles WHERE archived = 0 AND expiration_date IS NOT NULL AND expiration_date != '-'"
     )
@@ -278,7 +274,6 @@ async def build_monitoring_view():
             role_m = f"<@&{role_id}>" if role_id else f"**{role_name}**"
             expiring.append((exp, f"• Роль {role_m} у <@{owner_id}> — {_ts(exp)}"))
 
-    # Комнаты
     await cursor.execute(
         "SELECT leader_id, room_name, expiration_date, voice_channel_id FROM room_leadership WHERE expiration_date IS NOT NULL"
     )
@@ -289,7 +284,6 @@ async def build_monitoring_view():
             ch = f"<#{voice_id}>" if voice_id else f"**{room_name}**"
             expiring.append((exp, f"• Комната {ch} у <@{leader_id}> — {_ts(exp)}"))
 
-    # Браки
     await cursor.execute(
         "SELECT user1_id, user2_id, expires_at FROM marriages WHERE expires_at IS NOT NULL"
     )
@@ -303,30 +297,49 @@ async def build_monitoring_view():
     expiring_lines = [line for _, line in expiring[:MAX_EXPIRING]]
     expiring_block = "\n".join(expiring_lines) if expiring_lines else "*Ближайших истечений нет*"
 
-    # ----- Картинка со счётчиками (marriages/rooms/roles на monitoring.png) -----
-    image_buffer = create_monitoring_image(marriages_count, rooms_count, roles_count)
-    image_file = discord.File(image_buffer, filename="monitoring.png")
-
-    # ----- Текстовые блоки под картинкой -----
-    events_text = f"**Недавние события**\n{events_block}"
-    expiring_text = f"**Скоро истекает**\n{expiring_block}"
-    footer_text = f"-# Обновлено • интервал {UPDATE_INTERVAL} сек • {_ts(datetime.utcnow())}"
-
-    container = discord.ui.Container(accent_color=discord.Colour(EMBED_COLOR))
-    container.add_item(
-        discord.ui.MediaGallery(discord.MediaGalleryItem(media="attachment://monitoring.png"))
+    text = (
+        f"**Недавние события**\n{events_block}\n\n"
+        f"**Скоро истекает**\n{expiring_block}\n\n"
+        f"-# Обновлено • интервал {UPDATE_INTERVAL} сек"
     )
-    container.add_item(discord.ui.Separator())
-    container.add_item(discord.ui.TextDisplay(events_text))
-    container.add_item(discord.ui.Separator())
-    container.add_item(discord.ui.TextDisplay(expiring_text))
-    container.add_item(discord.ui.Separator())
-    container.add_item(discord.ui.TextDisplay(footer_text))
+    return text
 
-    view = discord.ui.LayoutView()
-    view.add_item(container)
 
-    return view, image_file
+# ================== ПОСТРОЕНИЕ COMPONENTS V2 ==================
+
+async def build_container_payload() -> tuple[list, File]:
+    """
+    Возвращает (components, file) для отправки/редактирования.
+    Картинка идёт первой (Media Gallery), потом текст журнала.
+    accent_color не указываем → левая полоска сливается с фоном.
+    """
+    counts = await _get_counts()
+    banner_buf = _render_banner(counts)
+    journal = await _build_journal_text()
+
+    file = File(banner_buf, filename="banner.png")
+
+    # Container (type 17) без accent_color — полоска не видна / цвет фона
+    components = [
+        {
+            "type": 17,  # Container
+            "components": [
+                {
+                    "type": 12,  # Media Gallery
+                    "items": [
+                        {
+                            "media": {"url": "attachment://banner.png"}
+                        }
+                    ]
+                },
+                {
+                    "type": 10,  # Text Display
+                    "content": journal
+                }
+            ]
+        }
+    ]
+    return components, file
 
 
 # ================== ФОНОВАЯ ЗАДАЧА ==================
@@ -352,15 +365,18 @@ async def _update_loop():
             try:
                 message = await channel.fetch_message(message_id)
             except (discord.NotFound, discord.HTTPException):
-                # сообщение удалили вручную — выключаем
                 await cursor.execute(
                     "UPDATE server_life_config SET enabled = FALSE, message_id = NULL"
                 )
                 _is_running = False
                 break
 
-            view, image_file = await build_monitoring_view()
-            await message.edit(view=view, attachments=[image_file])
+            components, file = await build_container_payload()
+            await message.edit(
+                attachments=[file],
+                components=components,
+                flags=IS_COMPONENTS_V2,
+            )
 
         except Exception as e:
             print(f"[monitoring] Ошибка обновления: {e}")
@@ -398,7 +414,6 @@ monitoring_group = app_commands.Group(
 async def monitoring_on(interaction: Interaction, канал: discord.TextChannel):
     await interaction.response.defer(ephemeral=True)
 
-    # Проверяем, не включено ли уже
     await cursor.execute(
         "SELECT enabled, message_id FROM server_life_config LIMIT 1"
     )
@@ -410,15 +425,17 @@ async def monitoring_on(interaction: Interaction, канал: discord.TextChanne
         )
         return
 
-    # Создаём сообщение
-    view, image_file = await build_monitoring_view()
-    msg = await канал.send(view=view, files=[image_file])
+    components, file = await build_container_payload()
+    msg = await канал.send(
+        files=[file],
+        components=components,
+        flags=IS_COMPONENTS_V2,
+    )
     try:
         await msg.pin(reason="Жизнь сервера")
     except Exception:
-        pass  # нет прав на закрепление — не критично
+        pass
 
-    # Сохраняем в БД
     await cursor.execute("DELETE FROM server_life_config")
     await cursor.execute(
         """
