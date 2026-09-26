@@ -13,18 +13,14 @@ from rate_limiter import safe_discord_call
 # ============================================
 CREATE_CHANNEL_NAME = "┗➕ ◦ Создать"
 SETTINGS_CHANNEL_NAME = "┍⚙️・настройка"
-TRIGGER_CHANNEL_LIMIT = 2       # лимит у самого канала-триггера "Создать"
-DEFAULT_ROOM_LIMIT = 0          # 0 = без ограничений — лимит личной комнаты по умолчанию
+TRIGGER_CHANNEL_LIMIT = 2
+DEFAULT_ROOM_LIMIT = 0
 RENAME_COOLDOWN_MINUTES = 10
-CREATE_COOLDOWN_SECONDS = 45    # антиспам: повторное создание комнаты тем же человеком
+CREATE_COOLDOWN_SECONDS = 45
 DATE_FORMAT = "%d.%m.%Y %H:%M:%S"
 
-# --- Кэш конфига системы temp_rooms по guild_id (экономит запросы к БД) ---
 _config_cache = {}
-
-# user_id -> timestamp последнего успешного создания (RAM, сбрасывается при рестарте)
 _create_cooldowns = {}
-
 _locks = {}
 
 
@@ -38,9 +34,6 @@ class _LockEntry:
 
 @asynccontextmanager
 async def _locked(key):
-    # Получение/создание записи и инкремент refcount — синхронный код без
-    # await между ними, поэтому в рамках одного event loop это атомарно и
-    # не может гонки с параллельной задачей на этом же ключе.
     entry = _locks.get(key)
     if entry is None:
         entry = _LockEntry()
@@ -100,16 +93,13 @@ def ok_embed(text: str) -> Embed:
 
 
 # ============================================
-# ФОНОВАЯ ОЧИСТКА ОПУСТЕВШИХ КОМНАТ (страховка на случай простоя бота)
+# ФОНОВАЯ ОЧИСТКА ОПУСТЕВШИХ КОМНАТ
 # ============================================
 
 _temp_room_cleanup_started = False
 
 
 def start_temp_room_cleanup_task(bot, cursor):
-    """Раз в 10 минут проверяет активные временные комнаты и удаляет те,
-    что физически пусты (или уже удалены вручную) — на случай, если
-    on_voice_state_update не отработал из-за простоя бота."""
     global _temp_room_cleanup_started
     if _temp_room_cleanup_started:
         return
@@ -204,7 +194,7 @@ def setup_temp_room_commands(bot, cursor):
         return channel
 
     # ============================================
-    # МОДАЛКИ (лимит / переименование)
+    # МОДАЛКИ
     # ============================================
 
     class SetLimitModal(Modal, title="Лимит участников"):
@@ -287,7 +277,29 @@ def setup_temp_room_commands(bot, cursor):
             await interaction.followup.send(embed=ok_embed(f"Комната переименована в **{new_name}**."), ephemeral=True)
 
     # ============================================
-    # ВЫБОР ЛЮБОГО ПОЛЬЗОВАТЕЛЯ СЕРВЕРА (доступ выдать/забрать)
+    # Кнопки-подтверждения для модалок (чтобы не нарушать 3с лимит)
+    # ============================================
+
+    class LimitConfirmView(View):
+        def __init__(self, channel_id: int):
+            super().__init__(timeout=60)
+            self.channel_id = channel_id
+
+        @discord.ui.button(label="Установить лимит", style=ButtonStyle.primary)
+        async def confirm(self, interaction: Interaction, button: Button):
+            await interaction.response.send_modal(SetLimitModal(self.channel_id))
+
+    class RenameConfirmView(View):
+        def __init__(self, channel_id: int):
+            super().__init__(timeout=60)
+            self.channel_id = channel_id
+
+        @discord.ui.button(label="Сменить название", style=ButtonStyle.primary)
+        async def confirm(self, interaction: Interaction, button: Button):
+            await interaction.response.send_modal(RenameRoomModal(self.channel_id))
+
+    # ============================================
+    # ВЫБОР ПОЛЬЗОВАТЕЛЕЙ
     # ============================================
 
     class AccessUserSelectView(View):
@@ -295,7 +307,7 @@ def setup_temp_room_commands(bot, cursor):
             super().__init__(timeout=60)
             self.channel_id = channel_id
             self.owner_id = owner_id
-            self.mode = mode  # 'grant' | 'revoke'
+            self.mode = mode
             self.add_item(AccessUserSelect(self))
 
     class AccessUserSelect(discord.ui.UserSelect):
@@ -348,16 +360,12 @@ def setup_temp_room_commands(bot, cursor):
 
             await interaction.edit_original_response(embed=summary, view=None)
 
-    # ============================================
-    # ВЫБОР ИЗ ТЕХ, КТО СЕЙЧАС В КАНАЛЕ (кик / мут / размут / передача)
-    # ============================================
-
     class MemberActionSelectView(View):
         def __init__(self, channel_id, owner_id, action, members):
             super().__init__(timeout=60)
             self.channel_id = channel_id
             self.owner_id = owner_id
-            self.action = action  # 'kick' | 'transfer'
+            self.action = action
             self.add_item(MemberActionSelect(self, members))
 
     class MemberActionSelect(Select):
@@ -440,11 +448,8 @@ def setup_temp_room_commands(bot, cursor):
             await interaction.edit_original_response(embed=summary, view=None)
 
     # ============================================
-    # PERSISTENT-ПАНЕЛЬ УПРАВЛЕНИЯ (одно сообщение на весь сервер)
+    # PERSISTENT-ПАНЕЛЬ
     # ============================================
-    # После рестарта нужен bot.add_view с теми же custom_id.
-    # «Не ответило вовремя» = нет response за 3с → defer ДО БД/API.
-    # restore вешаем на on_ready (не bot.loop.create_task из sync setup).
 
     class TempRoomPanelView(View):
         def __init__(self):
@@ -536,11 +541,17 @@ def setup_temp_room_commands(bot, cursor):
 
         @discord.ui.button(emoji="<:roomlimit:1530363527930314892>", style=ButtonStyle.secondary, custom_id="temprooms:limit", row=0)
         async def btn_limit(self, interaction: Interaction, button: Button):
+            # ВАЖНО: сначала defer, потом БД
+            await interaction.response.defer(ephemeral=True)
             room, channel = await self._resolve_owner_room(interaction.guild, interaction.user.id)
             if not room:
-                await interaction.response.send_message(embed=no_room_embed(), ephemeral=True)
+                await interaction.followup.send(embed=no_room_embed(), ephemeral=True)
                 return
-            await interaction.response.send_modal(SetLimitModal(channel.id))
+            await interaction.followup.send(
+                embed=ok_embed(f"Нажмите кнопку ниже, чтобы установить лимит для комнаты **{channel.name}**."),
+                view=LimitConfirmView(channel.id),
+                ephemeral=True
+            )
 
         @discord.ui.button(emoji="<:vidatdostup:1530363632272281690>", style=ButtonStyle.secondary, custom_id="temprooms:grant", row=1)
         async def btn_grant(self, interaction: Interaction, button: Button):
@@ -584,17 +595,20 @@ def setup_temp_room_commands(bot, cursor):
 
         @discord.ui.button(emoji="<:changename:1530363133938368662>", style=ButtonStyle.secondary, custom_id="temprooms:rename", row=1)
         async def btn_rename(self, interaction: Interaction, button: Button):
+            # ВАЖНО: сначала defer, потом БД
+            await interaction.response.defer(ephemeral=True)
             room, channel = await self._resolve_owner_room(interaction.guild, interaction.user.id)
             if not room:
-                await interaction.response.send_message(embed=no_room_embed(), ephemeral=True)
+                await interaction.followup.send(embed=no_room_embed(), ephemeral=True)
                 return
+
             if room.last_rename:
                 try:
                     last = datetime.strptime(room.last_rename, DATE_FORMAT)
                     remaining = timedelta(minutes=RENAME_COOLDOWN_MINUTES) - (datetime.now() - last)
                     if remaining.total_seconds() > 0:
                         minutes_left = int(remaining.total_seconds() // 60) + 1
-                        await interaction.response.send_message(
+                        await interaction.followup.send(
                             embed=error_embed(
                                 f"Название можно менять раз в {RENAME_COOLDOWN_MINUTES} минут. "
                                 f"Подождите ещё ~{minutes_left} мин."
@@ -604,7 +618,12 @@ def setup_temp_room_commands(bot, cursor):
                         return
                 except ValueError:
                     pass
-            await interaction.response.send_modal(RenameRoomModal(channel.id))
+
+            await interaction.followup.send(
+                embed=ok_embed(f"Нажмите кнопку ниже, чтобы сменить название комнаты **{channel.name}**."),
+                view=RenameConfirmView(channel.id),
+                ephemeral=True
+            )
 
         @discord.ui.button(emoji="<:peredat:1530362967239950397>", style=ButtonStyle.secondary, custom_id="temprooms:transfer", row=1)
         async def btn_transfer(self, interaction: Interaction, button: Button):
@@ -633,8 +652,6 @@ def setup_temp_room_commands(bot, cursor):
     _panel_restore_done = False
 
     async def restore_panel_messages():
-        """on_ready: перепривязывает view к панели из БД; если сообщение
-        удалено — создаёт новое. Не используем bot.loop.create_task из sync setup."""
         nonlocal _panel_restore_done
         if _panel_restore_done:
             return
@@ -677,12 +694,11 @@ def setup_temp_room_commands(bot, cursor):
     bot.add_listener(restore_panel_messages, 'on_ready')
 
     # ============================================
-    # СОЗДАНИЕ КОМНАТЫ ПРИ ВХОДЕ В ТРИГГЕР-КАНАЛ
+    # СОЗДАНИЕ КОМНАТЫ
     # ============================================
 
     async def handle_room_creation(member, guild, config: ConfigRow):
         async with _locked(('member', member.id)):
-            # Если у пользователя уже есть активная комната — просто возвращаем его туда
             existing = await get_room_by_owner(guild.id, member.id)
             if existing:
                 existing_channel = await resolve_room_channel(guild, existing)
@@ -693,7 +709,6 @@ def setup_temp_room_commands(bot, cursor):
                         pass
                     return
 
-            # Антиспам: не чаще раза в CREATE_COOLDOWN_SECONDS (только RAM)
             now_ts = datetime.now().timestamp()
             last_create = _create_cooldowns.get(member.id)
             if last_create is not None and (now_ts - last_create) < CREATE_COOLDOWN_SECONDS:
@@ -707,7 +722,6 @@ def setup_temp_room_commands(bot, cursor):
             if category is None or not isinstance(category, discord.CategoryChannel):
                 return
 
-            # Название без эмодзи/символов: "Комната <ник игрока>"
             room_name = f"Комната {member.display_name}"[:100]
 
             try:
@@ -723,10 +737,6 @@ def setup_temp_room_commands(bot, cursor):
                 print(f"❌ Ошибка создания временной комнаты для {member}: {e}")
                 return
 
-            # Пишем комнату в БД ДО перемещения участника: если пользователь
-            # моментально отключится (обрыв связи), событие выхода уже найдёт
-            # запись комнаты в temp_rooms и корректно её подчистит — вместо
-            # того, чтобы канал остался физически "осиротевшим" без записи.
             try:
                 await cursor.execute('''
                     INSERT INTO temp_rooms (voice_channel_id, guild_id, owner_id, user_limit, is_locked, is_hidden, created_at, last_rename)
@@ -746,18 +756,13 @@ def setup_temp_room_commands(bot, cursor):
         guild = member.guild
 
         try:
-            # === Вход в триггер-канал "Создать" ===
             if after.channel is not None and (before.channel is None or before.channel.id != after.channel.id):
                 config = await get_config(guild.id)
                 if config and after.channel.id == config.create_channel_id:
                     await handle_room_creation(member, guild, config)
 
-            # === Выход из комнаты — проверяем опустела ли она ===
             if before.channel is not None and (after.channel is None or after.channel.id != before.channel.id):
                 config = await get_config(guild.id)
-                # Технические каналы системы ("Создать" / "настройка") никогда
-                # не хранятся в temp_rooms, но эта проверка — дополнительная
-                # страховка: их нельзя удалить в этой ветке ни при каких условиях.
                 is_system_channel = bool(config) and before.channel.id in (
                     config.create_channel_id, config.settings_channel_id
                 )
@@ -778,14 +783,13 @@ def setup_temp_room_commands(bot, cursor):
     bot.add_listener(on_voice_state_update, 'on_voice_state_update')
 
     # ============================================
-    # /vremcomnata — НАСТРОЙКА СИСТЕМЫ (АДМИНИСТРАЦИЯ)
+    # /vremcomnata
     # ============================================
 
     async def create_system_in_category(interaction: Interaction, category: discord.CategoryChannel):
         guild = interaction.guild
         await interaction.response.defer(ephemeral=True)
 
-        # Если система уже была настроена — убираем старые технические каналы
         old_config = await get_config(guild.id)
         if old_config:
             for old_id in (old_config.create_channel_id, old_config.settings_channel_id):
@@ -796,9 +800,6 @@ def setup_temp_room_commands(bot, cursor):
                     except Exception:
                         pass
 
-        # Явно копируем overwrites категории — иначе новые каналы не наследуют
-        # ограничения доступа категории (Discord API не синхронизирует их
-        # автоматически при создании через API).
         category_overwrites = dict(category.overwrites)
 
         try:
@@ -863,8 +864,6 @@ def setup_temp_room_commands(bot, cursor):
             await create_system_in_category(interaction, category)
 
     async def delete_system(guild: discord.Guild) -> bool:
-        """Полностью удаляет систему временных комнат: все активные личные
-        комнаты, канал-триггер, канал настройки и запись конфига."""
         config = await get_config(guild.id)
         if not config:
             return False
