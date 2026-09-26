@@ -36,11 +36,11 @@ FONT_REGULAR_PATH = "ProximaNova-Regular.ttf"
 # size — размер шрифта именно для этой цифры (места под них разное)
 NUM_POSITIONS = {
     # "0" между словами АКТИВНЫЕ / ПОКУПКИ, по центру щели, чуть ниже строки заголовка
-    "marriages": {"pos": (819, 370), "size": 88},
+    "marriages": {"pos": (849, 390), "size": 88},
     # цифра под буквой "М" в "Брачных рум:" — ниже и немного правее
-    "rooms":     {"pos": (835, 545), "size": 72},
+    "rooms":     {"pos": (865, 565), "size": 72},
     # цифра под буквой "М" в "Личных рум:" — ниже
-    "roles":     {"pos": (820, 695), "size": 72},
+    "roles":     {"pos": (850, 715), "size": 72},
 }
 NUM_COLOR = (255, 255, 255)
 NUM_STROKE_WIDTH = 2  # толщина обводки, делает цифры визуально жирнее
@@ -419,10 +419,44 @@ async def _update_loop():
                     components=components,
                     flags=IS_COMPONENTS_V2,
                 )
-            except TypeError:
-                # Библиотека не поддерживает components/flags в edit
-                await message.edit(attachments=[file])
-                print("[monitoring] edit() не принял components — обновил только картинку")
+            except TypeError as te:
+                # Некоторые версии discord.py не принимают components/flags в message.edit().
+                # В таком случае обязательно редактируем сообщение напрямую через Discord API,
+                # иначе картинка обновится, а текст (включая timestamp) останется старым.
+                print(f"[monitoring] edit() не принял components/flags: {te}")
+                print("[monitoring] Переходим на прямой HTTP-запрос для полного обновления...")
+
+                route = discord.http.Route(
+                    "PATCH",
+                    "/channels/{channel_id}/messages/{message_id}",
+                    channel_id=channel.id,
+                    message_id=message.id,
+                )
+
+                payload = {
+                    "flags": IS_COMPONENTS_V2,
+                    "components": components,
+                    "attachments": [
+                        {"id": 0, "filename": file.filename}
+                    ],
+                }
+
+                form = [
+                    {
+                        "name": "payload_json",
+                        "value": json.dumps(payload),
+                    },
+                ]
+
+                file.fp.seek(0)
+                form.append({
+                    "name": "files[0]",
+                    "value": file.fp,
+                    "filename": file.filename,
+                    "content_type": "image/png",
+                })
+
+                await bot_instance.http.request(route, form=form)
 
         except Exception as e:
             print(f"[monitoring] Ошибка обновления: {e}")
