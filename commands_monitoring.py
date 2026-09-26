@@ -32,14 +32,18 @@ FONT_BOLD_PATH = "ProximaNova-Bold.ttf"
 FONT_REGULAR_PATH = "ProximaNova-Regular.ttf"
 
 # Координаты чисел на баннере (2555x1041)
-# Подобраны под текущий макет: сразу после двоеточий
+# pos — центр цифры (anchor="mm", т.е. и по X, и по Y ровно по центру)
+# size — размер шрифта именно для этой цифры (места под них разное)
 NUM_POSITIONS = {
-    "marriages": (780, 310),   # Брачных рум:
-    "rooms":     (780, 470),   # Личных рум:
-    "roles":     (780, 630),   # Личных ролей:
+    # "0" между словами АКТИВНЫЕ / ПОКУПКИ, по центру щели, чуть ниже строки заголовка
+    "marriages": {"pos": (794, 345), "size": 80},
+    # цифра под буквой "М" в "Брачных рум:" — в зазоре перед следующей строкой
+    "rooms":     {"pos": (835, 520), "size": 64},
+    # цифра под буквой "М" в "Личных рум:" — в зазоре перед следующей строкой
+    "roles":     {"pos": (800, 670), "size": 64},
 }
-NUM_FONT_SIZE = 56
 NUM_COLOR = (255, 255, 255)
+NUM_STROKE_WIDTH = 2  # толщина обводки, делает цифры визуально жирнее
 
 # Discord Components V2
 IS_COMPONENTS_V2 = 1 << 15  # 32768
@@ -148,13 +152,23 @@ def _render_banner(counts: dict) -> io.BytesIO:
     base = Image.open(BANNER_PATH).convert("RGBA")
     draw = ImageDraw.Draw(base)
 
-    try:
-        font = _load_font(FONT_BOLD_PATH, NUM_FONT_SIZE)
-    except Exception:
-        font = ImageFont.load_default()
+    # Кэш шрифтов по размеру, чтобы не грузить один и тот же файл повторно
+    _font_cache: dict[int, ImageFont.FreeTypeFont] = {}
 
-    for key, pos in NUM_POSITIONS.items():
+    def _font_for(size: int) -> ImageFont.FreeTypeFont:
+        if size not in _font_cache:
+            try:
+                _font_cache[size] = _load_font(FONT_BOLD_PATH, size)
+            except Exception:
+                _font_cache[size] = ImageFont.load_default()
+        return _font_cache[size]
+
+    for key, cfg in NUM_POSITIONS.items():
+        pos = cfg["pos"]
+        size = cfg["size"]
+        font = _font_for(size)
         value = str(counts.get(key, 0))
+
         # Рисуем с лёгкой тенью для читаемости
         shadow_offset = 2
         draw.text(
@@ -162,14 +176,18 @@ def _render_banner(counts: dict) -> io.BytesIO:
             value,
             font=font,
             fill=(0, 0, 0, 160),
-            anchor="lm",
+            anchor="mm",
+            stroke_width=NUM_STROKE_WIDTH,
+            stroke_fill=(0, 0, 0, 160),
         )
         draw.text(
             pos,
             value,
             font=font,
             fill=NUM_COLOR,
-            anchor="lm",
+            anchor="mm",
+            stroke_width=NUM_STROKE_WIDTH,
+            stroke_fill=NUM_COLOR,
         )
 
     buf = io.BytesIO()
