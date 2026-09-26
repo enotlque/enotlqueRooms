@@ -1,8 +1,12 @@
+import io
+import os
+
 import discord
-from discord import app_commands, Interaction, Embed
+from discord import app_commands, Interaction
 from datetime import datetime
 import asyncio
 from typing import Optional
+from PIL import Image, ImageDraw, ImageFont
 
 # ================== НАСТРОЙКИ (легко менять) ==================
 UPDATE_INTERVAL = 60 * 15      # секунд (для теста). Боевой режим: 15 * 60
@@ -21,6 +25,21 @@ EMBED_COLOR = 0x6e6e6e
 
 # Формат дат ролей/комнат
 ROLE_ROOM_DATE_FORMAT = "%d.%m.%Y в %Hч %Mм %Sс"
+
+# ================== КАРТИНКА СО СЧЁТЧИКАМИ (monitoring.png) ==================
+# Шаблон лежит в той же папке, что и PlaceholderProfile2.png (корень проекта)
+MONITORING_TEMPLATE_PATH = "monitoring.png"
+FONT_BOLD_PATH = "ProximaNova-Bold.ttf"  # тот же шрифт, что и в профиле
+
+# Координаты значений (откалиброваны по monitoring.png, точка — левый край
+# числа, по вертикали — центр строки, anchor="lm")
+COUNTER_VALUE_FONT_SIZE = 60
+COUNTER_VALUE_COLOR = (255, 255, 255)
+COUNTER_VALUE_POSITIONS = {
+    "marriages": (900, 428),   # строка "Брачных рум:"
+    "rooms": (830, 585),       # строка "Личных рум:"
+    "roles": (935, 723),       # строка "Личных ролей:"
+}
 # ==============================================================
 
 cursor = None
@@ -110,7 +129,51 @@ def _parse_iso(s: str):
         return None
 
 
-async def build_embed() -> Embed:
+# ================== ГЕНЕРАЦИЯ КАРТИНКИ ==================
+
+_BASIC_LAYOUT = getattr(ImageFont, "Layout", None)
+_BASIC_LAYOUT = _BASIC_LAYOUT.BASIC if _BASIC_LAYOUT else getattr(ImageFont, "LAYOUT_BASIC", 0)
+
+
+def _load_font(path: str, size: int) -> ImageFont.FreeTypeFont:
+    if not os.path.exists(path):
+        raise FileNotFoundError(
+            f"Шрифт '{path}' не найден. Положи файл '{path}' в корень проекта."
+        )
+    return ImageFont.truetype(path, size, layout_engine=_BASIC_LAYOUT)
+
+
+def create_monitoring_image(marriages_count: int, rooms_count: int, roles_count: int) -> io.BytesIO:
+    """Рисует счётчики поверх monitoring.png и возвращает PNG в буфере."""
+    if not os.path.exists(MONITORING_TEMPLATE_PATH):
+        raise FileNotFoundError(
+            f"Шаблон '{MONITORING_TEMPLATE_PATH}' не найден. "
+            f"Положи файл '{MONITORING_TEMPLATE_PATH}' в корень проекта."
+        )
+
+    base = Image.open(MONITORING_TEMPLATE_PATH).convert("RGBA")
+    draw = ImageDraw.Draw(base)
+    font = _load_font(FONT_BOLD_PATH, COUNTER_VALUE_FONT_SIZE)
+
+    values = {
+        "marriages": marriages_count,
+        "rooms": rooms_count,
+        "roles": roles_count,
+    }
+    for key, (x, y) in COUNTER_VALUE_POSITIONS.items():
+        draw.text((x, y), str(values.get(key, 0)), font=font, fill=COUNTER_VALUE_COLOR, anchor="lm")
+
+    buffer = io.BytesIO()
+    base.convert("RGB").save(buffer, format="PNG")
+    buffer.seek(0)
+    return buffer
+
+
+# ================== ПОСТРОЕНИЕ CV2-БЛОКА ==================
+
+async def build_monitoring_view():
+    """Возвращает (LayoutView, discord.File) — картинка со счётчиками сверху,
+    текстовые блоки (события/истечения) снизу, всё внутри одного Container."""
     now = datetime.now()
 
     # ----- Счётчики -----
@@ -123,15 +186,7 @@ async def build_embed() -> Embed:
     await cursor.execute("SELECT COUNT(*) FROM room_leadership")
     rooms_count = (cursor.fetchone() or [0])[0] or 0
 
-    counters = []
-    if marriages_count > 0:
-        counters.append(f"## {COUNTER_EMOJIS['marriages']} Браков: **{marriages_count}**")
-    if roles_count > 0:
-        counters.append(f"## {COUNTER_EMOJIS['roles']} Ролей: **{roles_count}**")
-    if rooms_count > 0:
-        counters.append(f"## {COUNTER_EMOJIS['rooms']} Комнат: **{rooms_count}**")
-
-    counters_block = "\n".join(counters) if counters else "*Пока пусто*"
+    # (счётчики теперь рисуются прямо на monitoring.png, см. create_monitoring_image)
 
     # ----- Недавние события -----
     # Берём с запасом, чтобы после сворачивания передач одной роли хватило на MAX_EVENTS
@@ -248,18 +303,30 @@ async def build_embed() -> Embed:
     expiring_lines = [line for _, line in expiring[:MAX_EXPIRING]]
     expiring_block = "\n".join(expiring_lines) if expiring_lines else "*Ближайших истечений нет*"
 
-    # ----- Собираем описание -----
-    description = (
-        f"{counters_block}\n\n"
-        f"**Недавние события**\n{events_block}\n\n"
-        f"**Скоро истекает**\n{expiring_block}"
-    )
+    # ----- Картинка со счётчиками (marriages/rooms/roles на monitoring.png) -----
+    image_buffer = create_monitoring_image(marriages_count, rooms_count, roles_count)
+    image_file = discord.File(image_buffer, filename="monitoring.png")
 
-    embed = Embed(description=description, color=EMBED_COLOR)
-    embed.set_author(name="Жизнь сервера")
-    embed.set_footer(text=f"Обновлено • интервал {UPDATE_INTERVAL} сек")
-    embed.timestamp = datetime.utcnow()
-    return embed
+    # ----- Текстовые блоки под картинкой -----
+    events_text = f"**Недавние события**\n{events_block}"
+    expiring_text = f"**Скоро истекает**\n{expiring_block}"
+    footer_text = f"-# Обновлено • интервал {UPDATE_INTERVAL} сек • {_ts(datetime.utcnow())}"
+
+    container = discord.ui.Container(accent_color=discord.Colour(EMBED_COLOR))
+    container.add_item(
+        discord.ui.MediaGallery(discord.MediaGalleryItem(media="attachment://monitoring.png"))
+    )
+    container.add_item(discord.ui.Separator())
+    container.add_item(discord.ui.TextDisplay(events_text))
+    container.add_item(discord.ui.Separator())
+    container.add_item(discord.ui.TextDisplay(expiring_text))
+    container.add_item(discord.ui.Separator())
+    container.add_item(discord.ui.TextDisplay(footer_text))
+
+    view = discord.ui.LayoutView()
+    view.add_item(container)
+
+    return view, image_file
 
 
 # ================== ФОНОВАЯ ЗАДАЧА ==================
@@ -292,8 +359,8 @@ async def _update_loop():
                 _is_running = False
                 break
 
-            embed = await build_embed()
-            await message.edit(embed=embed)
+            view, image_file = await build_monitoring_view()
+            await message.edit(view=view, attachments=[image_file])
 
         except Exception as e:
             print(f"[monitoring] Ошибка обновления: {e}")
@@ -344,8 +411,8 @@ async def monitoring_on(interaction: Interaction, канал: discord.TextChanne
         return
 
     # Создаём сообщение
-    embed = await build_embed()
-    msg = await канал.send(embed=embed)
+    view, image_file = await build_monitoring_view()
+    msg = await канал.send(view=view, files=[image_file])
     try:
         await msg.pin(reason="Жизнь сервера")
     except Exception:
