@@ -5,6 +5,7 @@ import asyncio
 from typing import Optional
 import io
 import os
+import json
 from PIL import Image, ImageDraw, ImageFont
 
 # ================== НАСТРОЙКИ (легко менять) ==================
@@ -482,7 +483,7 @@ async def monitoring_on(interaction: Interaction, канал: discord.TextChanne
                 "flags": IS_COMPONENTS_V2,
                 "components": components,
             }
-            form.append({"name": "payload_json", "value": discord.utils.to_json(payload)})
+            form.append({"name": "payload_json", "value": json.dumps(payload)})
 
             # Файл
             file.fp.seek(0)
