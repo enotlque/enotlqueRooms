@@ -9,7 +9,7 @@ import json
 from PIL import Image, ImageDraw, ImageFont
 
 # ================== НАСТРОЙКИ (легко менять) ==================
-UPDATE_INTERVAL = 15 * 60      # 15 минут
+UPDATE_INTERVAL = 15 * 120      # 30 минут минут
 MAX_EVENTS = 7
 MAX_EXPIRING = 7
 MAX_STORED_EVENTS = 30       # сколько событий максимум хранить в БД (старые удаляются)
@@ -335,7 +335,7 @@ async def _build_journal_text() -> str:
     text = (
         f"**Недавние события**\n{events_block}\n\n"
         f"**Скоро истекает**\n{expiring_block}\n\n"
-        f"-# Обновлено • <t:{int(now.timestamp())}:R> • интервал 15мин"
+        f"-# Обновлено • <t:{int(now.timestamp())}:R> • интервал 30мин"
     )
     return text
 
