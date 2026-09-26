@@ -14,7 +14,14 @@ MAX_EXPIRING = 7
 MAX_STORED_EVENTS = 30       # сколько событий максимум хранить в БД (старые удаляются)
 
 # Путь к баннеру (PNG с прозрачностью, круг выходит за края)
-BANNER_PATH = "monitoring_banner.png"
+# Ищем в нескольких местах, чтобы не зависеть от cwd
+_BANNER_CANDIDATES = [
+    "monitoring_banner.png",
+    os.path.join(os.path.dirname(__file__), "monitoring_banner.png"),
+    "monitoring (1).png",
+    os.path.join("attachments", "monitoring (1).png"),
+]
+BANNER_PATH = next((p for p in _BANNER_CANDIDATES if os.path.exists(p)), "monitoring_banner.png")
 
 # Шрифты (те же, что в профиле)
 FONT_BOLD_PATH = "ProximaNova-Bold.ttf"
@@ -128,6 +135,12 @@ async def _get_counts() -> dict:
 
 def _render_banner(counts: dict) -> io.BytesIO:
     """Рисует числа на баннере и возвращает PNG с прозрачностью."""
+    if not os.path.exists(BANNER_PATH):
+        raise FileNotFoundError(
+            f"Баннер не найден: {BANNER_PATH}. "
+            f"Положи файл monitoring_banner.png рядом с ботом."
+        )
+
     base = Image.open(BANNER_PATH).convert("RGBA")
     draw = ImageDraw.Draw(base)
 
@@ -313,33 +326,39 @@ async def build_container_payload() -> tuple[list, File]:
     Картинка идёт первой (Media Gallery), потом текст журнала.
     accent_color не указываем → левая полоска сливается с фоном.
     """
-    counts = await _get_counts()
-    banner_buf = _render_banner(counts)
-    journal = await _build_journal_text()
+    try:
+        counts = await _get_counts()
+        banner_buf = _render_banner(counts)
+        journal = await _build_journal_text()
 
-    file = File(banner_buf, filename="banner.png")
+        file = File(banner_buf, filename="banner.png")
 
-    # Container (type 17) без accent_color — полоска не видна / цвет фона
-    components = [
-        {
-            "type": 17,  # Container
-            "components": [
-                {
-                    "type": 12,  # Media Gallery
-                    "items": [
-                        {
-                            "media": {"url": "attachment://banner.png"}
-                        }
-                    ]
-                },
-                {
-                    "type": 10,  # Text Display
-                    "content": journal
-                }
-            ]
-        }
-    ]
-    return components, file
+        # Container (type 17) без accent_color — полоска не видна / цвет фона
+        components = [
+            {
+                "type": 17,  # Container
+                "components": [
+                    {
+                        "type": 12,  # Media Gallery
+                        "items": [
+                            {
+                                "media": {"url": "attachment://banner.png"}
+                            }
+                        ]
+                    },
+                    {
+                        "type": 10,  # Text Display
+                        "content": journal
+                    }
+                ]
+            }
+        ]
+        return components, file
+    except Exception as e:
+        print(f"[monitoring] Ошибка build_container_payload: {e}")
+        import traceback
+        traceback.print_exc()
+        raise
 
 
 # ================== ФОНОВАЯ ЗАДАЧА ==================
@@ -380,6 +399,8 @@ async def _update_loop():
 
         except Exception as e:
             print(f"[monitoring] Ошибка обновления: {e}")
+            import traceback
+            traceback.print_exc()
 
         await asyncio.sleep(UPDATE_INTERVAL)
 
@@ -414,43 +435,55 @@ monitoring_group = app_commands.Group(
 async def monitoring_on(interaction: Interaction, канал: discord.TextChannel):
     await interaction.response.defer(ephemeral=True)
 
-    await cursor.execute(
-        "SELECT enabled, message_id FROM server_life_config LIMIT 1"
-    )
-    row = cursor.fetchone()
-    if row and row[0]:
+    try:
+        await cursor.execute(
+            "SELECT enabled, message_id FROM server_life_config LIMIT 1"
+        )
+        row = cursor.fetchone()
+        if row and row[0]:
+            await interaction.followup.send(
+                "Система уже включена. Сначала выключи через `/monitoring off`.",
+                ephemeral=True,
+            )
+            return
+
+        components, file = await build_container_payload()
+        msg = await канал.send(
+            files=[file],
+            components=components,
+            flags=IS_COMPONENTS_V2,
+        )
+        try:
+            await msg.pin(reason="Жизнь сервера")
+        except Exception:
+            pass
+
+        await cursor.execute("DELETE FROM server_life_config")
+        await cursor.execute(
+            """
+            INSERT INTO server_life_config (enabled, channel_id, message_id)
+            VALUES (TRUE, $1, $2)
+            """,
+            канал.id,
+            msg.id,
+        )
+
+        start_monitoring_task()
         await interaction.followup.send(
-            "Система уже включена. Сначала выключи через `/monitoring off`.",
+            f"Готово! Сообщение создано в {канал.mention} и будет обновляться каждые {UPDATE_INTERVAL} сек.",
             ephemeral=True,
         )
-        return
-
-    components, file = await build_container_payload()
-    msg = await канал.send(
-        files=[file],
-        components=components,
-        flags=IS_COMPONENTS_V2,
-    )
-    try:
-        await msg.pin(reason="Жизнь сервера")
-    except Exception:
-        pass
-
-    await cursor.execute("DELETE FROM server_life_config")
-    await cursor.execute(
-        """
-        INSERT INTO server_life_config (enabled, channel_id, message_id)
-        VALUES (TRUE, $1, $2)
-        """,
-        канал.id,
-        msg.id,
-    )
-
-    start_monitoring_task()
-    await interaction.followup.send(
-        f"Готово! Сообщение создано в {канал.mention} и будет обновляться каждые {UPDATE_INTERVAL} сек.",
-        ephemeral=True,
-    )
+    except Exception as e:
+        print(f"[monitoring] Ошибка в /monitoring on: {e}")
+        import traceback
+        traceback.print_exc()
+        try:
+            await interaction.followup.send(
+                f"❌ Ошибка при создании:\n```{type(e).__name__}: {e}```",
+                ephemeral=True,
+            )
+        except Exception:
+            pass
 
 
 @monitoring_group.command(name="off", description="Выключить канал «Жизнь сервера»")
