@@ -16,12 +16,15 @@ MAX_STORED_EVENTS = 30       # сколько событий максимум х
 # Путь к баннеру (PNG с прозрачностью, круг выходит за края)
 # Ищем в нескольких местах, чтобы не зависеть от cwd
 _BANNER_CANDIDATES = [
+    "monitoring.png",
     "monitoring_banner.png",
+    os.path.join(os.path.dirname(__file__), "monitoring.png"),
     os.path.join(os.path.dirname(__file__), "monitoring_banner.png"),
     "monitoring (1).png",
+    os.path.join("attachments", "monitoring.png"),
     os.path.join("attachments", "monitoring (1).png"),
 ]
-BANNER_PATH = next((p for p in _BANNER_CANDIDATES if os.path.exists(p)), "monitoring_banner.png")
+BANNER_PATH = next((p for p in _BANNER_CANDIDATES if os.path.exists(p)), "monitoring.png")
 
 # Шрифты (те же, что в профиле)
 FONT_BOLD_PATH = "ProximaNova-Bold.ttf"
