@@ -15,7 +15,7 @@ CREATE_CHANNEL_NAME = "┗➕ ◦ Создать"
 SETTINGS_CHANNEL_NAME = "┍⚙️・настройка"
 TRIGGER_CHANNEL_LIMIT = 2
 DEFAULT_ROOM_LIMIT = 0
-RENAME_COOLDOWN_MINUTES = 10
+RENAME_COOLDOWN_MINUTES = 2
 CREATE_COOLDOWN_SECONDS = 45
 DATE_FORMAT = "%d.%m.%Y %H:%M:%S"
 
@@ -54,6 +54,27 @@ RoomRow = namedtuple('RoomRow', 'voice_channel_id guild_id owner_id user_limit i
 
 def is_admin(interaction: discord.Interaction) -> bool:
     return interaction.user.guild_permissions.administrator
+
+
+def rename_cooldown_left(last_rename) -> float:
+    """Сколько секунд осталось до конца кд на смену названия (0 — менять можно)."""
+    if not last_rename:
+        return 0
+    try:
+        last = datetime.strptime(last_rename, DATE_FORMAT)
+    except ValueError:
+        return 0
+    remaining = timedelta(minutes=RENAME_COOLDOWN_MINUTES) - (datetime.now() - last)
+    return max(0, remaining.total_seconds())
+
+
+def rename_cooldown_embed(seconds_left: float) -> Embed:
+    minutes, seconds = divmod(int(seconds_left) + 1, 60)
+    left_text = f"{minutes} мин {seconds} сек" if minutes else f"{seconds} сек"
+    return error_embed(
+        f"Название можно менять раз в {RENAME_COOLDOWN_MINUTES} мин. "
+        f"Подождите ещё ~{left_text}."
+    )
 
 
 PANEL_EMBED_DESCRIPTION = (
@@ -259,21 +280,44 @@ def setup_temp_room_commands(bot, cursor):
                 return
 
             await interaction.response.defer(ephemeral=True)
-            try:
-                await safe_discord_call(lambda: channel.edit(name=new_name, reason="Смена названия комнаты владельцем"))
-            except discord.HTTPException as e:
-                if e.status == 429:
-                    await interaction.followup.send(
-                        embed=error_embed("Discord временно ограничивает смену названия канала. Попробуйте чуть позже."),
-                        ephemeral=True
-                    )
-                    return
-                raise
 
-            await cursor.execute(
-                'UPDATE temp_rooms SET last_rename = $1 WHERE voice_channel_id = $2',
-                datetime.now().strftime(DATE_FORMAT), self.channel_id
-            )
+            # Лок на канал: два быстрых сабмита подряд не пройдут одновременно
+            async with _locked(('rename', self.channel_id)):
+                room = await get_room_by_channel(self.channel_id)
+                if room is None:
+                    await interaction.followup.send(embed=no_room_embed(), ephemeral=True)
+                    return
+
+                # Главная проверка кд — здесь, а не на кнопке:
+                # модалку можно открыть несколько раз с одного ephemeral-сообщения
+                left = rename_cooldown_left(room.last_rename)
+                if left > 0:
+                    await interaction.followup.send(embed=rename_cooldown_embed(left), ephemeral=True)
+                    return
+
+                # Занимаем кд СРАЗУ, до смены имени
+                previous_rename = room.last_rename
+                await cursor.execute(
+                    'UPDATE temp_rooms SET last_rename = $1 WHERE voice_channel_id = $2',
+                    datetime.now().strftime(DATE_FORMAT), self.channel_id
+                )
+
+                try:
+                    await safe_discord_call(lambda: channel.edit(name=new_name, reason="Смена названия комнаты владельцем"))
+                except discord.HTTPException as e:
+                    # Имя не сменилось — возвращаем кд назад
+                    await cursor.execute(
+                        'UPDATE temp_rooms SET last_rename = $1 WHERE voice_channel_id = $2',
+                        previous_rename, self.channel_id
+                    )
+                    if e.status == 429:
+                        await interaction.followup.send(
+                            embed=error_embed("Discord временно ограничивает смену названия канала. Попробуйте чуть позже."),
+                            ephemeral=True
+                        )
+                        return
+                    raise
+
             await interaction.followup.send(embed=ok_embed(f"Комната переименована в **{new_name}**."), ephemeral=True)
 
     # ============================================
@@ -602,22 +646,10 @@ def setup_temp_room_commands(bot, cursor):
                 await interaction.followup.send(embed=no_room_embed(), ephemeral=True)
                 return
 
-            if room.last_rename:
-                try:
-                    last = datetime.strptime(room.last_rename, DATE_FORMAT)
-                    remaining = timedelta(minutes=RENAME_COOLDOWN_MINUTES) - (datetime.now() - last)
-                    if remaining.total_seconds() > 0:
-                        minutes_left = int(remaining.total_seconds() // 60) + 1
-                        await interaction.followup.send(
-                            embed=error_embed(
-                                f"Название можно менять раз в {RENAME_COOLDOWN_MINUTES} минут. "
-                                f"Подождите ещё ~{minutes_left} мин."
-                            ),
-                            ephemeral=True
-                        )
-                        return
-                except ValueError:
-                    pass
+            left = rename_cooldown_left(room.last_rename)
+            if left > 0:
+                await interaction.followup.send(embed=rename_cooldown_embed(left), ephemeral=True)
+                return
 
             await interaction.followup.send(
                 embed=ok_embed(f"Нажмите кнопку ниже, чтобы сменить название комнаты **{channel.name}**."),
