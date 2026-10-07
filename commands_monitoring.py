@@ -405,12 +405,20 @@ async def _update_loop():
 
             try:
                 message = await channel.fetch_message(message_id)
-            except (discord.NotFound, discord.HTTPException):
+            except discord.NotFound:
+                # Сообщение реально удалено (не временная ошибка) — отключаем по делу.
+                print(f"[monitoring] Сообщение {message_id} не найдено (404), отключаю мониторинг")
                 await cursor.execute(
                     "UPDATE server_life_config SET enabled = FALSE, message_id = NULL"
                 )
                 _is_running = False
                 break
+            except discord.HTTPException as e:
+                # Временная проблема (рейт-лимит, 502/503, обрыв сети и т.п.) —
+                # НЕ выключаем мониторинг, просто пробуем на следующей итерации.
+                print(f"[monitoring] Временная ошибка fetch_message, пробую позже: {e}")
+                await asyncio.sleep(UPDATE_INTERVAL)
+                continue
 
             components, file = await build_container_payload()
             try:
@@ -466,12 +474,26 @@ async def _update_loop():
         await asyncio.sleep(UPDATE_INTERVAL)
 
 
+def _on_update_task_done(task: asyncio.Task):
+    # Страховка: если _update_loop всё же умрёт от необработанного исключения
+    # (а не штатно вышел из while или был отменён), это обязательно будет видно
+    # в логах, а не тихо пропадёт.
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc is not None:
+        print(f"[monitoring] Фоновая задача упала с необработанным исключением: {exc!r}")
+        import traceback
+        traceback.print_exception(type(exc), exc, exc.__traceback__)
+
+
 def start_monitoring_task():
     global _update_task, _is_running
     if _is_running:
         return
     _is_running = True
     _update_task = asyncio.create_task(_update_loop())
+    _update_task.add_done_callback(_on_update_task_done)
     print("✅ Задача «Жизнь сервера» запущена")
 
 
