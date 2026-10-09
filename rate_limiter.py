@@ -11,21 +11,29 @@ class RateLimiter:
         self.last_refill = time.time()
     
     async def acquire(self):
-        async with self.lock:
-            now = time.time()
-            elapsed = now - self.last_refill
-            self.tokens = min(
-                self.max_requests,
-                self.tokens + elapsed * (self.max_requests / self.per_seconds)
-            )
-            self.last_refill = now
-            
-            if self.tokens < 1:
+        while True:
+            async with self.lock:
+                now = time.time()
+                # Защита от скачков системных часов (миграция контейнера, NTP-коррекция):
+                # отрицательный elapsed не должен "съедать" токены и раздувать wait.
+                elapsed = max(0.0, now - self.last_refill)
+                self.tokens = min(
+                    self.max_requests,
+                    self.tokens + elapsed * (self.max_requests / self.per_seconds)
+                )
+                self.last_refill = now
+
+                if self.tokens >= 1:
+                    self.tokens -= 1
+                    return
+
                 wait = (1 - self.tokens) * (self.per_seconds / self.max_requests)
-                await asyncio.sleep(wait)
-                self.tokens = 1
-            
-            self.tokens -= 1
+                # Защита от аномально большого ожидания, если tokens всё же ушли
+                # в глубокий минус — не должны блокировать всех часами.
+                wait = min(wait, self.per_seconds * 5)
+            # Спим ВНЕ лока: пока этот вызов ждёт, остальные не должны стоять в очереди
+            # просто чтобы проверить свой баланс токенов.
+            await asyncio.sleep(wait)
 
 # Глобальный экземпляр
 rate_limiter = RateLimiter(max_requests=10, per_seconds=1)
