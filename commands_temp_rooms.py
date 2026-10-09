@@ -499,6 +499,30 @@ def setup_temp_room_commands(bot, cursor):
         def __init__(self):
             super().__init__(timeout=None)
 
+        async def on_error(self, interaction: Interaction, error: Exception, item) -> None:
+            # По умолчанию discord.py тихо отправляет ошибки из кнопок в системный
+            # logging (не в наши print), поэтому они не видны в логах Render.
+            # Логируем явно, чтобы при следующем сбое («ошибка ожидания» без видимых
+            # причин) были реальные traceback и тип исключения.
+            custom_id = getattr(item, "custom_id", repr(item))
+            print(f"❌ [temprooms] Ошибка в кнопке '{custom_id}' (user={interaction.user.id}): {error!r}")
+            import traceback
+            traceback.print_exception(type(error), error, error.__traceback__)
+
+            try:
+                if interaction.response.is_done():
+                    await interaction.followup.send(
+                        embed=error_embed("Произошла ошибка, попробуйте ещё раз."),
+                        ephemeral=True
+                    )
+                else:
+                    await interaction.response.send_message(
+                        embed=error_embed("Произошла ошибка, попробуйте ещё раз."),
+                        ephemeral=True
+                    )
+            except Exception:
+                pass  # интеракция уже мертва (протухший токен) — тут уже ничего не поделать
+
         async def _resolve_owner_room(self, guild, user_id):
             room = await get_room_by_owner(guild.id, user_id)
             if room is None:
