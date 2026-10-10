@@ -350,7 +350,10 @@ async def build_container_payload() -> tuple[list, File]:
     """
     try:
         counts = await _get_counts()
-        banner_buf = _render_banner(counts)
+        # PIL-рендер — CPU-тяжёлая синхронная работа, в отдельном потоке,
+        # чтобы не блокировать event loop (это фоновая задача: если она
+        # блокирует луп, страдают интеракции ВСЕХ других команд бота).
+        banner_buf = await asyncio.to_thread(_render_banner, counts)
         journal = await _build_journal_text()
 
         file = File(banner_buf, filename="banner.png")
