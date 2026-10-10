@@ -19,6 +19,7 @@ import os
 import io
 from PIL import Image, ImageDraw, ImageFont
 from cache import get_cached, set_cached, delete_cached, balance_cache_key, profile_cache_key, top_cache_key
+from view_utils import SafeView
 from commands_profile import create_profile_image, get_active_role_names, get_member_room_options
 
 from . import common
@@ -75,8 +76,13 @@ class DiceButton(Button):
                 return
 
             # СОЗДАЕМ КАРТИНКУ ДУЭЛИ
+            # PIL-рендер — CPU-тяжёлая синхронная работа, уводим в отдельный
+            # поток, чтобы не блокировать event loop (и не ронять 3-секундный
+            # дедлайн ответа других интеракций, которые могут совпасть по времени).
             try:
-                duel_image = self.create_duel_image(self.author_name, interaction.user.name)
+                duel_image = await asyncio.to_thread(
+                    self.create_duel_image, self.author_name, interaction.user.name
+                )
                 duel_file = discord.File(duel_image, filename="duel.png")
             except Exception as e:
                 print(f"Ошибка создания картинки дуэли: {e}")
@@ -200,7 +206,7 @@ class DiceButton(Button):
         return img_byte_arr
 
 
-class DiceView(View):
+class DiceView(SafeView):
     def __init__(self, ставка: int, author_id: int, author_name: str, target_user: discord.Member = None):
         super().__init__(timeout=60)  # 60 секунд таймаут
         self.ставка = ставка
