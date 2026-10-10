@@ -19,6 +19,7 @@ import os
 import io
 from PIL import Image, ImageDraw, ImageFont
 from cache import get_cached, set_cached, delete_cached, balance_cache_key, profile_cache_key, top_cache_key
+from view_utils import SafeView
 from commands_profile import create_profile_image, get_active_role_names, get_member_room_options
 from rate_limiter import safe_discord_call
 
@@ -71,64 +72,80 @@ def start_role_expiry_task(bot):
         now = datetime.now()
 
         for role_name, expiration_date, archived, id_owner_now in rows:
-            # Архивированные роли не истекают — их отсчёт заморожен вручную владельцем
-            if archived or not expiration_date or expiration_date == '-':
-                continue
-
             try:
-                expiration = datetime.strptime(expiration_date, "%d.%m.%Y в %Hч %Mм %Sс")
-            except (TypeError, ValueError):
-                continue
-
-            if expiration > now:
-                continue  # Роль ещё активна
-
-            # Сначала убираем запись из БД, потом удаляем роль на сервере.
-            # Иначе on_guild_role_delete увидит ещё живую запись и отправит
-            # ложное уведомление «удалена вручную» поверх авто-уведомления.
-            try:
-                await log_event("role_expire", user_id=id_owner_now, item_name=role_name)
-                await cursor.execute("DELETE FROM roles WHERE role_name = $1", role_name)
-                print(f"🗑️ Роль '{role_name}' автоматически удалена: истёк срок действия")
+                await _process_role_expiration_row(
+                    bot, cursor, now, role_name, expiration_date, archived, id_owner_now
+                )
             except Exception as e:
-                print(f"❌ Ошибка удаления роли '{role_name}' из БД: {e}")
-                continue
-
-            discord_role = None
-            for guild in bot.guilds:
-                discord_role = get(guild.roles, name=role_name)
-                if discord_role:
-                    break
-
-            if discord_role:
-                try:
-                    await safe_discord_call(
-                        lambda: discord_role.delete(
-                            reason="Автоматическое удаление: истёк срок действия роли"
-                        )
-                    )
-                except Exception as e:
-                    print(f"❌ Не удалось удалить роль '{role_name}' на сервере: {e}")
-
-            if id_owner_now:
-                owner = bot.get_user(id_owner_now)
-                if owner:
-                    try:
-                        await owner.send(embed=discord.Embed(
-                            description=(
-                                f"Ваша роль **{role_name}** была автоматически удалена: "
-                                "истёк срок действия, и она не была продлена или заархивирована вовремя."
-                            ),
-                            color=0x6e6e6e
-                        ))
-                    except Exception:
-                        pass  # Пользователь закрыл личные сообщения — не критично
+                # Защита от непредвиденной ошибки, которая иначе вырвалась бы
+                # за пределы всех внутренних try/except — без неё одна
+                # проблемная роль могла бы навсегда остановить весь часовой
+                # цикл автопроверки (discord.ext.tasks не перезапускает
+                # задачу автоматически после необработанного исключения).
+                print(f"❌ Непредвиденная ошибка автопроверки роли '{role_name}': {e!r}")
+                import traceback
+                traceback.print_exc()
 
     @check_role_expirations.before_loop
     async def before_check():
         await bot.wait_until_ready()
 
     check_role_expirations.start()
+
+
+async def _process_role_expiration_row(bot, cursor, now, role_name, expiration_date, archived, id_owner_now):
+    # Архивированные роли не истекают — их отсчёт заморожен вручную владельцем
+    if archived or not expiration_date or expiration_date == '-':
+        return
+
+    try:
+        expiration = datetime.strptime(expiration_date, "%d.%m.%Y в %Hч %Mм %Sс")
+    except (TypeError, ValueError):
+        return
+
+    if expiration > now:
+        return  # Роль ещё активна
+
+    # Сначала убираем запись из БД, потом удаляем роль на сервере.
+    # Иначе on_guild_role_delete увидит ещё живую запись и отправит
+    # ложное уведомление «удалена вручную» поверх авто-уведомления.
+    try:
+        await log_event("role_expire", user_id=id_owner_now, item_name=role_name)
+        await cursor.execute("DELETE FROM roles WHERE role_name = $1", role_name)
+        print(f"🗑️ Роль '{role_name}' автоматически удалена: истёк срок действия")
+    except Exception as e:
+        print(f"❌ Ошибка удаления роли '{role_name}' из БД: {e}")
+        return
+
+    discord_role = None
+    for guild in bot.guilds:
+        discord_role = get(guild.roles, name=role_name)
+        if discord_role:
+            break
+
+    if discord_role:
+        try:
+            await safe_discord_call(
+                lambda: discord_role.delete(
+                    reason="Автоматическое удаление: истёк срок действия роли"
+                )
+            )
+        except Exception as e:
+            print(f"❌ Не удалось удалить роль '{role_name}' на сервере: {e}")
+
+    if id_owner_now:
+        owner = bot.get_user(id_owner_now)
+        if owner:
+            try:
+                await owner.send(embed=discord.Embed(
+                    description=(
+                        f"Ваша роль **{role_name}** была автоматически удалена: "
+                        "истёк срок действия, и она не была продлена или заархивирована вовремя."
+                    ),
+                    color=0x6e6e6e
+                ))
+            except Exception:
+                pass  # Пользователь закрыл личные сообщения — не критично
 
 # ============================================
 # ОЧИСТКА БД ПРИ РУЧНОМ УДАЛЕНИИ РОЛИ
@@ -406,7 +423,7 @@ async def manage(interaction: Interaction):
     view = RoleSelectView(user_roles, interaction.user, interaction.guild)
     await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
-class RoleSelectView(View):
+class RoleSelectView(SafeView):
     def __init__(self, user_roles, user, guild):
         super().__init__()
         self.user_roles = user_roles
@@ -601,7 +618,7 @@ class RoleSelectView(View):
 
         await interaction.response.edit_message(embed=embed, view=updated_view)
 
-class RoleDeleteConfirmView(View):
+class RoleDeleteConfirmView(SafeView):
     """Второй шаг подтверждения удаления роли (как двухфакторка) — Да/Отмена."""
 
     def __init__(self, role_info, user_id, parent_view: 'RoleSelectView'):
@@ -839,7 +856,7 @@ async def give(interaction: discord.Interaction):
     view = RoleGiveView(sender, owned_roles)
     await interaction.response.send_message(embed=view.build_embed(), view=view, ephemeral=True)
 
-class RoleGiveView(ui.View):
+class RoleGiveView(SafeView):
     """Меню передачи роли: выбор роли -> выбор получателя -> сумма -> подтверждение.
     Логика построена по образцу LobbyManageView из commands_lobby.py."""
 
@@ -1032,7 +1049,7 @@ class RoleGiveConfirmButton(ui.Button):
         offer_message = await interaction.channel.send(content=получатель.mention, embed=offer_embed, view=offer_view)
         offer_view.message = offer_message
 
-class RoleGiveAcceptView(ui.View):
+class RoleGiveAcceptView(SafeView):
     """Публичная кнопка «Купить» для получателя. 60 секунд на принятие,
     иначе роль возвращается отправителю, а сообщение стирается."""
 
@@ -1177,7 +1194,7 @@ def build_role_members_page(owner: discord.Member, роль: discord.Role, offse
     view = RoleMemberView(offset, len(members), owner, роль, members)
     return embed, view
 
-class RoleMemberView(ui.View):
+class RoleMemberView(SafeView):
     def __init__(self, offset: int, total_items: int, owner: discord.Member, роль: discord.Role, members: list):
         super().__init__()
         self.offset = offset
