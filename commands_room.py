@@ -6,6 +6,7 @@ import re
 from rate_limiter import safe_discord_call
 from discord import ButtonStyle
 from discord.ui import Button, View, Select, Modal, TextInput
+from view_utils import SafeView
 import asyncio
 from datetime import datetime, timedelta
 from discord import Embed, Interaction, Member
@@ -78,99 +79,119 @@ def start_room_expiry_task(bot, cursor):
         now = datetime.now()
 
         for leader_id, room_name, expiration_date, room_balance, role_id, text_channel_id, voice_channel_id in rows:
-            if not expiration_date:
-                continue
-
             try:
-                expiration = datetime.strptime(expiration_date, ROOM_DATE_FORMAT)
-            except (TypeError, ValueError):
-                continue
-
-            if expiration > now:
-                continue  # Комната ещё активна
-
-            affordable_days = (room_balance or 0) // ROOM_EXTEND_DAY_COST
-
-            if affordable_days >= 1:
-                days_to_add = min(affordable_days, ROOM_AUTO_RENEW_MAX_DAYS)
-                cost = days_to_add * ROOM_EXTEND_DAY_COST
-                new_expiration_str = (expiration + timedelta(days=days_to_add)).strftime(ROOM_DATE_FORMAT)
-
-                try:
-                    await cursor.execute(
-                        'UPDATE room_leadership SET expiration_date = $1, room_balance = room_balance - $2, extend_date = $3 WHERE leader_id = $4',
-                        new_expiration_str, cost, now.strftime(ROOM_DATE_FORMAT), leader_id
-                    )
-                    await log_event("room_extend", user_id=leader_id, item_name=room_name, item_id=voice_channel_id, amount=cost)
-                    print(f"✅ Комната '{room_name}' автопродлена на {days_to_add} дн. (списано {cost} из банка комнаты)")
-                except Exception as e:
-                    print(f"❌ Ошибка автопродления комнаты '{room_name}': {e}")
-                continue
-
-            # Средств в банке не хватает — комната удаляется.
-            # Сначала убираем запись из БД, потом Discord-объекты.
-            # Иначе on_room_role_delete / on_room_channel_delete увидят ещё
-            # живую запись и залогируют ложное «удалено вручную».
-            try:
-                await log_event("room_expire", user_id=leader_id, item_name=room_name, item_id=voice_channel_id)
-                await cursor.execute('DELETE FROM room_leadership WHERE leader_id = $1', leader_id)
-                print(f"🗑️ Комната '{room_name}' автоматически удалена: истёк срок действия, банк пуст")
+                await _process_room_expiration_row(
+                    bot, cursor, now, leader_id, room_name, expiration_date,
+                    room_balance, role_id, text_channel_id, voice_channel_id
+                )
             except Exception as e:
-                print(f"❌ Ошибка удаления комнаты '{room_name}' из БД: {e}")
-                continue
-
-            for guild in bot.guilds:
-                role = guild.get_role(role_id) if role_id else None
-                if role:
-                    try:
-                        await safe_discord_call(
-                            lambda: role.delete(
-                                reason="Автоматическое удаление: истёк срок действия комнаты"
-                            )
-                        )
-                    except Exception as e:
-                        print(f"❌ Не удалось удалить роль комнаты '{room_name}': {e}")
-
-                text_channel = guild.get_channel(text_channel_id) if text_channel_id else None
-                if text_channel:
-                    try:
-                        await safe_discord_call(
-                            lambda: text_channel.delete(
-                                reason="Автоматическое удаление: истёк срок действия комнаты"
-                            )
-                        )
-                    except Exception:
-                        pass
-
-                voice_channel = guild.get_channel(voice_channel_id) if voice_channel_id else None
-                if voice_channel:
-                    try:
-                        await safe_discord_call(
-                            lambda: voice_channel.delete(
-                                reason="Автоматическое удаление: истёк срок действия комнаты"
-                            )
-                        )
-                    except Exception:
-                        pass
-
-            owner = bot.get_user(leader_id)
-            if owner:
-                try:
-                    await owner.send(embed=discord.Embed(
-                        description=(
-                            f"Ваша комната **{room_name}** была автоматически удалена: "
-                            "истёк срок действия, и в банке комнаты не хватило средств на продление."
-                        ),
-                        color=0x6e6e6e
-                    ))
-                except Exception:
-                    pass  # Пользователь закрыл личные сообщения — не критично
+                # Защита на случай непредвиденной ошибки, которая вырвалась бы
+                # за пределы всех внутренних try/except ниже — без этого одна
+                # проблемная комната могла бы навсегда остановить весь часовой
+                # цикл проверки (discord.ext.tasks не перезапускает задачу
+                # автоматически после необработанного исключения).
+                print(f"❌ Непредвиденная ошибка автопроверки комнаты '{room_name}': {e!r}")
+                import traceback
+                traceback.print_exc()
 
     @check_room_expirations.before_loop
     async def before_check():
         await bot.wait_until_ready()
 
     check_room_expirations.start()
+
+
+async def _process_room_expiration_row(
+    bot, cursor, now, leader_id, room_name, expiration_date,
+    room_balance, role_id, text_channel_id, voice_channel_id
+):
+    if not expiration_date:
+        return
+
+    try:
+        expiration = datetime.strptime(expiration_date, ROOM_DATE_FORMAT)
+    except (TypeError, ValueError):
+        return
+
+    if expiration > now:
+        return  # Комната ещё активна
+
+    affordable_days = (room_balance or 0) // ROOM_EXTEND_DAY_COST
+
+    if affordable_days >= 1:
+        days_to_add = min(affordable_days, ROOM_AUTO_RENEW_MAX_DAYS)
+        cost = days_to_add * ROOM_EXTEND_DAY_COST
+        new_expiration_str = (expiration + timedelta(days=days_to_add)).strftime(ROOM_DATE_FORMAT)
+
+        try:
+            await cursor.execute(
+                'UPDATE room_leadership SET expiration_date = $1, room_balance = room_balance - $2, extend_date = $3 WHERE leader_id = $4',
+                new_expiration_str, cost, now.strftime(ROOM_DATE_FORMAT), leader_id
+            )
+            await log_event("room_extend", user_id=leader_id, item_name=room_name, item_id=voice_channel_id, amount=cost)
+            print(f"✅ Комната '{room_name}' автопродлена на {days_to_add} дн. (списано {cost} из банка комнаты)")
+        except Exception as e:
+            print(f"❌ Ошибка автопродления комнаты '{room_name}': {e}")
+        return
+
+    # Средств в банке не хватает — комната удаляется.
+    # Сначала убираем запись из БД, потом Discord-объекты.
+    # Иначе on_room_role_delete / on_room_channel_delete увидят ещё
+    # живую запись и залогируют ложное «удалено вручную».
+    try:
+        await log_event("room_expire", user_id=leader_id, item_name=room_name, item_id=voice_channel_id)
+        await cursor.execute('DELETE FROM room_leadership WHERE leader_id = $1', leader_id)
+        print(f"🗑️ Комната '{room_name}' автоматически удалена: истёк срок действия, банк пуст")
+    except Exception as e:
+        print(f"❌ Ошибка удаления комнаты '{room_name}' из БД: {e}")
+        return
+
+    for guild in bot.guilds:
+        role = guild.get_role(role_id) if role_id else None
+        if role:
+            try:
+                await safe_discord_call(
+                    lambda: role.delete(
+                        reason="Автоматическое удаление: истёк срок действия комнаты"
+                    )
+                )
+            except Exception as e:
+                print(f"❌ Не удалось удалить роль комнаты '{room_name}': {e}")
+
+        text_channel = guild.get_channel(text_channel_id) if text_channel_id else None
+        if text_channel:
+            try:
+                await safe_discord_call(
+                    lambda: text_channel.delete(
+                        reason="Автоматическое удаление: истёк срок действия комнаты"
+                    )
+                )
+            except Exception as e:
+                print(f"❌ Не удалось удалить текстовый канал комнаты '{room_name}': {e}")
+
+        voice_channel = guild.get_channel(voice_channel_id) if voice_channel_id else None
+        if voice_channel:
+            try:
+                await safe_discord_call(
+                    lambda: voice_channel.delete(
+                        reason="Автоматическое удаление: истёк срок действия комнаты"
+                    )
+                )
+            except Exception as e:
+                print(f"❌ Не удалось удалить голосовой канал комнаты '{room_name}': {e}")
+
+    owner = bot.get_user(leader_id)
+    if owner:
+        try:
+            await owner.send(embed=discord.Embed(
+                description=(
+                    f"Ваша комната **{room_name}** была автоматически удалена: "
+                    "истёк срок действия, и в банке комнаты не хватило средств на продление."
+                ),
+                color=0x6e6e6e
+            ))
+        except Exception:
+            pass  # Пользователь закрыл личные сообщения — не критично
 
 def setup_room_commands(bot, cursor, CATEGORY_ID, restricted_role_id):
     room_group = app_commands.Group(name="room", description="Управление комнатами")
@@ -566,7 +587,7 @@ def setup_room_commands(bot, cursor, CATEGORY_ID, restricted_role_id):
         else:
             await interaction.edit_original_response(embed=embed, view=view)
 
-    class RoomListView(View):
+    class RoomListView(SafeView):
         def __init__(self, offset: int, total_rooms: int, total_pages: int):
             super().__init__(timeout=None)  # Убрать таймаут
             self.offset = offset
@@ -857,7 +878,7 @@ def setup_room_commands(bot, cursor, CATEGORY_ID, restricted_role_id):
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
         view.original_message = await interaction.original_response()
 
-    class InitialView(View):
+    class InitialView(SafeView):
         def __init__(self, owner_role_id, owner, room_name, member_count, voice_channel, is_channel_open, interaction,
                      creation_date=None, expiration_date=None, room_balance=0):
             super().__init__()
@@ -1021,7 +1042,7 @@ def setup_room_commands(bot, cursor, CATEGORY_ID, restricted_role_id):
             confirm_view = RoomDeleteConfirmView(self.parent_view)
             await interaction.response.edit_message(embed=confirm_embed, view=confirm_view)
 
-    class RoomDeleteConfirmView(View):
+    class RoomDeleteConfirmView(SafeView):
         """Второй шаг подтверждения удаления комнаты — Да/Отмена (как в /role manage)."""
 
         def __init__(self, parent_view):
@@ -1080,7 +1101,7 @@ def setup_room_commands(bot, cursor, CATEGORY_ID, restricted_role_id):
             embed = self.parent_view.cached_embed()
             await interaction.response.edit_message(embed=embed, view=self.parent_view)
 
-    class TransferSelectView(View):
+    class TransferSelectView(SafeView):
         def __init__(self, parent_view):
             super().__init__(timeout=60)
             self.parent_view = parent_view
@@ -1126,7 +1147,7 @@ def setup_room_commands(bot, cursor, CATEGORY_ID, restricted_role_id):
             confirm_view = TransferConfirmView(parent_view, new_member)
             await interaction.response.edit_message(embed=confirm_embed, view=confirm_view)
 
-    class TransferConfirmView(View):
+    class TransferConfirmView(SafeView):
         def __init__(self, parent_view, new_member):
             super().__init__(timeout=60)
             self.parent_view = parent_view
@@ -1276,7 +1297,7 @@ def setup_room_commands(bot, cursor, CATEGORY_ID, restricted_role_id):
                 except Exception:
                     pass
 
-    class ManageRoomView(View):
+    class ManageRoomView(SafeView):
         def __init__(self, owner_role_id, owner, room_name, member_count, voice_channel, is_channel_open, interaction, original_view,
                      creation_date=None, expiration_date=None, room_balance=0):
             super().__init__()
@@ -1354,7 +1375,7 @@ def setup_room_commands(bot, cursor, CATEGORY_ID, restricted_role_id):
             view = MembersListView(offset, len(members), interaction, role, members, self.parent_view)
             await interaction.response.edit_message(embed=embed, view=view)
 
-    class MembersListView(View):
+    class MembersListView(SafeView):
         def __init__(self, offset: int, total_items: int, interaction: Interaction, role: discord.Role, members: list, parent_view):
             super().__init__()
             self.offset = offset
@@ -1526,7 +1547,7 @@ def setup_room_commands(bot, cursor, CATEGORY_ID, restricted_role_id):
     # === Выгнать из голосового канала: список строится из реальных участников канала,
     # а не через глобальный UserSelect (как у "Пригласить"/"Исключить"), т.к. кикать
     # можно только тех, кто прямо сейчас в канале ===
-    class KickSelectView(View):
+    class KickSelectView(SafeView):
         def __init__(self, owner_role_id, parent_view, owner, members_in_channel):
             super().__init__(timeout=60)
             self.owner_role_id = owner_role_id
@@ -1719,7 +1740,7 @@ def setup_room_commands(bot, cursor, CATEGORY_ID, restricted_role_id):
             return ManageRoomView(self.owner_role_id, self.owner, self.room_name, self.member_count, self.voice_channel, is_channel_open, interaction)
 
     # === Массовое приглашение через нативный UserSelect (выпадающий список с поиском) ===
-    class InviteSelectView(View):
+    class InviteSelectView(SafeView):
         def __init__(self, owner_role_id, parent_view, owner):
             super().__init__(timeout=60)
             self.owner_role_id = owner_role_id
@@ -1818,7 +1839,7 @@ def setup_room_commands(bot, cursor, CATEGORY_ID, restricted_role_id):
             await interaction.edit_original_response(embed=summary, view=None)
 
     # === Массовое исключение через нативный UserSelect (выпадающий список с поиском) ===
-    class RemoveSelectView(View):
+    class RemoveSelectView(SafeView):
         def __init__(self, owner_role_id, parent_view, owner):
             super().__init__(timeout=60)
             self.owner_role_id = owner_role_id
@@ -1887,7 +1908,7 @@ def setup_room_commands(bot, cursor, CATEGORY_ID, restricted_role_id):
 
             await interaction.edit_original_response(embed=summary, view=None)
 
-    class InviteConfirmView(View):
+    class InviteConfirmView(SafeView):
         def __init__(self, member, owner, role, parent_view, owner_role_id, room_name, pending_set=None):
             super().__init__(timeout=20)
             self.member = member
@@ -2035,7 +2056,7 @@ def setup_room_commands(bot, cursor, CATEGORY_ID, restricted_role_id):
         creation_date, expiration_date, room_balance = row if row else (None, None, 0)
         return format_member_room_embed(room_name, creation_date, expiration_date, room_balance), (creation_date, expiration_date, room_balance)
 
-    class MemberRoomView(View):
+    class MemberRoomView(SafeView):
         def __init__(self, leader_id, room_name, creation_date=None, expiration_date=None, room_balance=0):
             super().__init__(timeout=120)
             self.leader_id = leader_id
@@ -2066,7 +2087,7 @@ def setup_room_commands(bot, cursor, CATEGORY_ID, restricted_role_id):
         async def bank_callback(self, interaction: Interaction):
             await interaction.response.send_modal(RoomBankDepositModal(self.leader_id, refresh_view=self))
 
-    class RoomMemberSelectView(View):
+    class RoomMemberSelectView(SafeView):
         """Список комнат, в которых пользователь состоит (когда их 2 и более) — выбор нужной."""
 
         def __init__(self, rooms: list):
