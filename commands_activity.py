@@ -72,41 +72,64 @@ def _snapshot_guild_voice_state(bot: commands.Bot):
 
 @tasks.loop(seconds=TICK_INTERVAL)
 async def voice_tick():
-    # Берём снэпшот состояния войса под блокировкой
-    async with _voice_members_lock:
-        members_snapshot = dict(_voice_members)
-    
-    # Собираем ID пользователей, которым нужно начислить время
-    eligible_users = []
-    for channel_id, members in members_snapshot.items():
-        eligible_ids = [uid for uid, (member, vs) in members.items() if _is_eligible(vs)]
-        if len(eligible_ids) >= 2:
-            eligible_users.extend(eligible_ids)
-    
-    if not eligible_users:
-        return
-    
-    # Обновляем накопители под блокировкой
-    # Округление НЕ делаем здесь - иначе погрешность накапливается на каждом тике
-    # (за FLUSH_INTERVAL это 10 округлений подряд вместо одного). Копим "сырое"
-    # значение, округляем один раз непосредственно перед записью в БД.
-    async with _pending_lock:
-        for uid in eligible_users:
-            _pending_hours[uid] = _pending_hours.get(uid, 0.0) + HOUR_INCREMENT
+    # ВАЖНО: вся функция обёрнута в try/except. Раньше тут не было вообще
+    # никакой защиты — а discord.ext.tasks по умолчанию при необработанном
+    # исключении тихо ОСТАНАВЛИВАЕТ цикл навсегда (пишет только в системный
+    # logging, не в наш print), без автоматического перезапуска. Для задачи,
+    # которая копит войс-часы для экономики бота, такая тихая смерть означала
+    # бы, что начисление часов прекращается без единой видимой причины.
+    try:
+        # Берём снэпшот состояния войса под блокировкой
+        async with _voice_members_lock:
+            members_snapshot = dict(_voice_members)
+
+        # Собираем ID пользователей, которым нужно начислить время
+        eligible_users = []
+        for channel_id, members in members_snapshot.items():
+            eligible_ids = [uid for uid, (member, vs) in members.items() if _is_eligible(vs)]
+            if len(eligible_ids) >= 2:
+                eligible_users.extend(eligible_ids)
+
+        if not eligible_users:
+            return
+
+        # Обновляем накопители под блокировкой
+        # Округление НЕ делаем здесь - иначе погрешность накапливается на каждом тике
+        # (за FLUSH_INTERVAL это 10 округлений подряд вместо одного). Копим "сырое"
+        # значение, округляем один раз непосредственно перед записью в БД.
+        async with _pending_lock:
+            for uid in eligible_users:
+                _pending_hours[uid] = _pending_hours.get(uid, 0.0) + HOUR_INCREMENT
+    except Exception as e:
+        print(f"❌ Ошибка в voice_tick: {e!r}")
+        import traceback
+        traceback.print_exc()
 
 
 @tasks.loop(seconds=FLUSH_INTERVAL)
 async def flush_activity():
+    # Та же логика, что в voice_tick: оборачиваем ВСЮ функцию, а не только
+    # DB-часть, чтобы ни одно исключение (включая до соединения с БД) не
+    # могло тихо остановить цикл навсегда.
+    try:
+        await _flush_activity_body()
+    except Exception as e:
+        print(f"❌ Ошибка в flush_activity: {e!r}")
+        import traceback
+        traceback.print_exc()
+
+
+async def _flush_activity_body():
     # Проверяем, есть ли данные для флаша (под блокировкой)
     async with _pending_lock:
         if not _pending_hours and not _pending_messages:
             return
-        
+
         hours_snapshot = dict(_pending_hours)
         messages_snapshot = dict(_pending_messages)
         _pending_hours.clear()
         _pending_messages.clear()
-    
+
     if _get_connection is None:
         # Возвращаем данные обратно, если нет соединения
         async with _pending_lock:
