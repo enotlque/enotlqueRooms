@@ -1,3 +1,4 @@
+import asyncio
 import io
 import os
 import logging
@@ -126,10 +127,16 @@ def _draw_right_aligned_text(draw, right_x: int, center_y: int, text: str, font,
     draw.text((right_x, center_y), text, font=font, fill=fill, anchor="rm")
 
 
-async def _fetch_circular_avatar(member: discord.abc.User, diameter: int) -> Image.Image:
+async def _fetch_avatar_bytes(member: discord.abc.User) -> bytes:
+    """Только сетевой I/O (не блокирует event loop) — PIL-обработка этих
+    байт вынесена в _build_circular_avatar и выполняется в отдельном потоке."""
     asset = member.display_avatar.replace(size=256, format="png")
-    avatar_bytes = await asset.read()
+    return await asset.read()
 
+
+def _build_circular_avatar(avatar_bytes: bytes, diameter: int) -> Image.Image:
+    """Чистый CPU-bound PIL-код, без await — вызывать только через
+    asyncio.to_thread, не напрямую из корутины."""
     big_diameter = diameter * AVATAR_SUPERSAMPLE
 
     avatar_big = Image.open(io.BytesIO(avatar_bytes)).convert("RGBA")
@@ -369,9 +376,53 @@ async def create_profile_image(cursor, member: discord.Member, guild: discord.Gu
     if member.joined_at:
         joined_str = member.joined_at.strftime("%d.%m.%Y")
 
+    # Аватар — сетевой I/O отдельно от PIL-обработки
+    avatar_bytes = await _fetch_avatar_bytes(member)
+    status_color = _get_status_color(status_source)
+
+    # Вся CPU-тяжёлая отрисовка (PIL) уходит в отдельный поток, чтобы не
+    # блокировать event loop бота на время рендера — иначе любая другая
+    # интеракция (в том числе кнопки из других команд), случайно совпавшая
+    # по времени с генерацией этой картинки, рискует не уложиться в
+    # 3-секундный дедлайн Discord на ответ.
+    buffer = await asyncio.to_thread(
+        _render_profile_image_sync,
+        avatar_bytes,
+        status_color,
+        member.display_name,
+        joined_str,
+        couple_line,
+        days_line,
+        displayed_role.name if displayed_role else None,
+        room_name,
+        balance,
+        voice_hours,
+        messages_count,
+        rank,
+    )
+    return buffer
+
+
+def _render_profile_image_sync(
+    avatar_bytes: bytes,
+    status_color: tuple,
+    display_name: str,
+    joined_str: str,
+    couple_line,
+    days_line,
+    displayed_role_name,
+    room_name,
+    balance,
+    voice_hours,
+    messages_count,
+    rank,
+) -> io.BytesIO:
+    """Чистая синхронная CPU-работа (PIL) — никаких await/DB/сети внутри.
+    Вызывается только через asyncio.to_thread из create_profile_image."""
+
     # Сборка картинки
     base = Image.open(TEMPLATE_PATH).convert("RGBA")
-    
+
     if base.size != (1200, 640):
         base = base.resize((1200, 640), Image.LANCZOS)
 
@@ -388,17 +439,15 @@ async def create_profile_image(cursor, member: discord.Member, guild: discord.Gu
     font_right_value = _load_font(FONT_BOLD_PATH, RIGHT_VALUE_FONT_SIZE)
 
     # Аватар
-    avatar = await _fetch_circular_avatar(member, AVATAR_SIZE)
+    avatar = _build_circular_avatar(avatar_bytes, AVATAR_SIZE)
     avatar_pos = (AVATAR_CENTER[0] - AVATAR_RADIUS, AVATAR_CENTER[1] - AVATAR_RADIUS)
     base.alpha_composite(avatar, avatar_pos)
-    
-    # Рисуем обводку цветом статуса пользователя (толщина 1px)
-    status_color = _get_status_color(status_source)
 
+    # Рисуем обводку цветом статуса пользователя (толщина 1px)
     _draw_avatar_ring(base, AVATAR_CENTER, AVATAR_RADIUS, AVATAR_RING_WIDTH, status_color)
 
     # Ник
-    _draw_centered_text(draw, USERNAME_CENTER_X, USERNAME_CENTER_Y, member.display_name, font_username, USERNAME_MAX_WIDTH)
+    _draw_centered_text(draw, USERNAME_CENTER_X, USERNAME_CENTER_Y, display_name, font_username, USERNAME_MAX_WIDTH)
 
     # Дата на сервере
     _draw_centered_text(draw, JOINED_CENTER_X, JOINED_CENTER_Y, f"На сервере с {joined_str}г", font_joined, JOINED_MAX_WIDTH, fill=JOINED_COLOR)
@@ -407,7 +456,7 @@ async def create_profile_image(cursor, member: discord.Member, guild: discord.Gu
     # Брачный профиль
     if couple_line:
         text_width = draw.textlength(couple_line, font=font_left_value)
-        
+
         if text_width <= LEFT_MAX_WIDTH:
             # Если текст короткий - центрируем по центру прямоугольника
             _draw_centered_text(draw, LEFT_COLUMN_CENTER_X, MARRIAGE_CENTER_Y, couple_line, font_left_value, LEFT_MAX_WIDTH)
@@ -415,7 +464,7 @@ async def create_profile_image(cursor, member: discord.Member, guild: discord.Gu
             # Если текст длинный - выравниваем по левому краю под буквой "Б"
             truncated = _truncate_to_width(draw, couple_line, font_left_value, LEFT_MAX_WIDTH)
             draw.text((LEFT_X, MARRIAGE_CENTER_Y), truncated, font=font_left_value, fill=TEXT_COLOR, anchor="lm")
-        
+
         if days_line:
             _draw_centered_text(draw, MARRIAGE_DAYS_CENTER_X, MARRIAGE_DAYS_CENTER_Y, days_line, font_marriage_days, MARRIAGE_DAYS_MAX_WIDTH)
     else:
@@ -423,7 +472,7 @@ async def create_profile_image(cursor, member: discord.Member, guild: discord.Gu
         _draw_centered_text(draw, LEFT_COLUMN_CENTER_X, MARRIAGE_CENTER_Y, "Отсутствует", font_left_value, LEFT_MAX_WIDTH)
 
     # Личная роль
-    _draw_centered_text(draw, ROLE_VALUE_CENTER_X, ROLE_VALUE_CENTER_Y, displayed_role.name if displayed_role else "Отсутствует", font_left_value, ROLE_VALUE_MAX_WIDTH)
+    _draw_centered_text(draw, ROLE_VALUE_CENTER_X, ROLE_VALUE_CENTER_Y, displayed_role_name if displayed_role_name else "Отсутствует", font_left_value, ROLE_VALUE_MAX_WIDTH)
 
     # Личная комната
     _draw_centered_text(draw, ROOM_VALUE_CENTER_X, ROOM_VALUE_CENTER_Y, room_name if room_name else "Отсутствует", font_left_value, ROOM_VALUE_MAX_WIDTH)
