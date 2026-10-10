@@ -19,6 +19,7 @@ import os
 import io
 from PIL import Image, ImageDraw, ImageFont
 from cache import get_cached, set_cached, delete_cached, balance_cache_key, profile_cache_key, top_cache_key
+from view_utils import SafeView
 from commands_profile import create_profile_image, get_active_role_names, get_member_room_options
 
 from . import common
@@ -75,7 +76,7 @@ class RoomDisplaySelect(discord.ui.Select):
         )
 
 
-class ProfileMenuView(discord.ui.View):
+class ProfileMenuView(SafeView):
     """Меню /me -> «Меню»: селект роли добавляется только если есть из чего выбирать
     (2+ активные роли), аналогично для комнаты (2+ комнаты по роли участника)."""
 
@@ -440,9 +441,16 @@ async def me(interaction: discord.Interaction, пользователь: discord
                     ephemeral=True
                 )
                 return
+            # ВАЖНО: отвечаем на интеракцию СРАЗУ, до запросов в БД и рендера
+            # картинки. Раньше ack уходил только после create_profile_image —
+            # то есть после нескольких await в БД + сетевого запроса аватара +
+            # PIL-рендера, что легко могло не уложиться в 3-секундный дедлайн
+            # Discord и дать пользователю "ошибка ожидания" без единой
+            # строчки в логах.
+            await i.response.defer()
             updated_buffer = await create_profile_image(cursor, user, i.guild)
             updated_file = discord.File(updated_buffer, filename="profile.png")
-            await i.response.edit_message(embed=None, attachments=[updated_file], view=view)
+            await i.edit_original_response(embed=None, attachments=[updated_file], view=view)
 
         button_back.callback = back_callback
         marriage_view.add_item(button_back)
