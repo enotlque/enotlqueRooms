@@ -19,6 +19,7 @@ import os
 import io
 from PIL import Image, ImageDraw, ImageFont
 from cache import get_cached, set_cached, delete_cached, balance_cache_key, profile_cache_key, top_cache_key
+from view_utils import SafeView
 from commands_profile import create_profile_image, get_active_role_names, get_member_room_options
 
 from . import common
@@ -51,7 +52,7 @@ def _build_top_embed(title: str, icon_url, entries: list, offset: int, page_size
     embed.set_footer(text=f"Страница {offset // page_size + 1}/{total_pages}")
     return embed
 
-class TopPaginatorView(ui.View):
+class TopPaginatorView(SafeView):
     """Постраничный просмотр топов с кнопками Назад / Удалить / Вперёд.
     Сообщение остаётся видимым всем, но удалить его может только тот, кто вызвал команду."""
 
