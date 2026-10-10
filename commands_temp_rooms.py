@@ -3,6 +3,7 @@ import asyncio
 from contextlib import asynccontextmanager
 from discord import app_commands, Interaction, Embed, ButtonStyle
 from discord.ui import View, Button, Select, Modal, TextInput
+from view_utils import SafeView
 from discord.ext import tasks
 from datetime import datetime, timedelta
 from collections import namedtuple
@@ -136,31 +137,44 @@ def start_temp_room_cleanup_task(bot, cursor):
             return
 
         for voice_channel_id, guild_id in rows:
-            guild = bot.get_guild(guild_id)
-            channel = guild.get_channel(voice_channel_id) if guild else None
-
-            if channel is None:
-                try:
-                    await cursor.execute('DELETE FROM temp_rooms WHERE voice_channel_id = $1', voice_channel_id)
-                except Exception as e:
-                    print(f"❌ Ошибка удаления записи временной комнаты {voice_channel_id}: {e}")
-                continue
-
-            if not any(not m.bot for m in channel.members):
-                try:
-                    await safe_discord_call(lambda c=channel: c.delete(reason="Комната опустела (фоновая проверка)"))
-                except Exception:
-                    pass
-                try:
-                    await cursor.execute('DELETE FROM temp_rooms WHERE voice_channel_id = $1', voice_channel_id)
-                except Exception as e:
-                    print(f"❌ Ошибка удаления записи временной комнаты {voice_channel_id}: {e}")
+            try:
+                await _process_cleanup_row(bot, cursor, voice_channel_id, guild_id)
+            except Exception as e:
+                # Защита от непредвиденной ошибки — без неё одна проблемная
+                # комната могла бы навсегда остановить весь 10-минутный цикл
+                # очистки (discord.ext.tasks не перезапускает задачу
+                # автоматически после необработанного исключения).
+                print(f"❌ Непредвиденная ошибка очистки временной комнаты {voice_channel_id}: {e!r}")
+                import traceback
+                traceback.print_exc()
 
     @cleanup_empty_rooms.before_loop
     async def before_cleanup():
         await bot.wait_until_ready()
 
     cleanup_empty_rooms.start()
+
+
+async def _process_cleanup_row(bot, cursor, voice_channel_id, guild_id):
+    guild = bot.get_guild(guild_id)
+    channel = guild.get_channel(voice_channel_id) if guild else None
+
+    if channel is None:
+        try:
+            await cursor.execute('DELETE FROM temp_rooms WHERE voice_channel_id = $1', voice_channel_id)
+        except Exception as e:
+            print(f"❌ Ошибка удаления записи временной комнаты {voice_channel_id}: {e}")
+        return
+
+    if not any(not m.bot for m in channel.members):
+        try:
+            await safe_discord_call(lambda c=channel: c.delete(reason="Комната опустела (фоновая проверка)"))
+        except Exception as e:
+            print(f"❌ Не удалось удалить опустевшую временную комнату {voice_channel_id}: {e}")
+        try:
+            await cursor.execute('DELETE FROM temp_rooms WHERE voice_channel_id = $1', voice_channel_id)
+        except Exception as e:
+            print(f"❌ Ошибка удаления записи временной комнаты {voice_channel_id}: {e}")
 
 
 def setup_temp_room_commands(bot, cursor):
@@ -324,7 +338,7 @@ def setup_temp_room_commands(bot, cursor):
     # Кнопки-подтверждения для модалок (чтобы не нарушать 3с лимит)
     # ============================================
 
-    class LimitConfirmView(View):
+    class LimitConfirmView(SafeView):
         def __init__(self, channel_id: int):
             super().__init__(timeout=60)
             self.channel_id = channel_id
@@ -333,7 +347,7 @@ def setup_temp_room_commands(bot, cursor):
         async def confirm(self, interaction: Interaction, button: Button):
             await interaction.response.send_modal(SetLimitModal(self.channel_id))
 
-    class RenameConfirmView(View):
+    class RenameConfirmView(SafeView):
         def __init__(self, channel_id: int):
             super().__init__(timeout=60)
             self.channel_id = channel_id
@@ -346,7 +360,7 @@ def setup_temp_room_commands(bot, cursor):
     # ВЫБОР ПОЛЬЗОВАТЕЛЕЙ
     # ============================================
 
-    class AccessUserSelectView(View):
+    class AccessUserSelectView(SafeView):
         def __init__(self, channel_id, owner_id, mode):
             super().__init__(timeout=60)
             self.channel_id = channel_id
@@ -404,7 +418,7 @@ def setup_temp_room_commands(bot, cursor):
 
             await interaction.edit_original_response(embed=summary, view=None)
 
-    class MemberActionSelectView(View):
+    class MemberActionSelectView(SafeView):
         def __init__(self, channel_id, owner_id, action, members):
             super().__init__(timeout=60)
             self.channel_id = channel_id
@@ -495,7 +509,7 @@ def setup_temp_room_commands(bot, cursor):
     # PERSISTENT-ПАНЕЛЬ
     # ============================================
 
-    class TempRoomPanelView(View):
+    class TempRoomPanelView(SafeView):
         def __init__(self):
             super().__init__(timeout=None)
 
@@ -897,7 +911,7 @@ def setup_temp_room_commands(bot, cursor):
         )
         await interaction.edit_original_response(embed=result_embed, view=None)
 
-    class CategorySelectView(View):
+    class CategorySelectView(SafeView):
         def __init__(self):
             super().__init__(timeout=120)
             self.add_item(CategoryChannelSelect())
@@ -947,7 +961,7 @@ def setup_temp_room_commands(bot, cursor):
         invalidate_config(guild.id)
         return True
 
-    class MainMenuView(View):
+    class MainMenuView(SafeView):
         def __init__(self):
             super().__init__(timeout=120)
 
