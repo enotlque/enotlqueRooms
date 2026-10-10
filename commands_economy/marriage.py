@@ -19,6 +19,7 @@ import os
 import io
 from PIL import Image, ImageDraw, ImageFont
 from cache import get_cached, set_cached, delete_cached, balance_cache_key, profile_cache_key, top_cache_key
+from view_utils import SafeView
 from commands_profile import create_profile_image, get_active_role_names, get_member_room_options
 
 from . import common
@@ -127,7 +128,7 @@ async def marry(interaction: discord.Interaction, пользователь: disc
             await interaction.response.send_message("Произошла ошибка при проверке статуса брака.", ephemeral=True)
             return False
 
-    class MarriageView(discord.ui.View):
+    class MarriageView(SafeView):
         def __init__(self):
             super().__init__(timeout=60)
             self.message = None
@@ -450,64 +451,82 @@ def start_marriage_expiry_task(bot):
 
         for row in rows:
             user1_id, user2_id, marriage_balance, expires_at_str, voice_channel_id = row
-
             try:
-                expires_at = datetime.fromisoformat(expires_at_str)
-            except (TypeError, ValueError):
-                continue
-
-            if expires_at > now:
-                continue
-
-            affordable_days = (marriage_balance or 0) // MARRIAGE_RENEWAL_DAY_COST
-
-            if affordable_days >= 1:
-                days_to_add = min(affordable_days, MARRIAGE_AUTO_RENEW_MAX_DAYS)
-                cost = days_to_add * MARRIAGE_RENEWAL_DAY_COST
-                new_expires_at = (expires_at + timedelta(days=days_to_add)).isoformat()
-
-                try:
-                    await cursor.execute(
-                        'UPDATE marriages SET expires_at = $1, marriage_balance = marriage_balance - $2, renewed_at = $3 '
-                        'WHERE user1_id = $4 AND user2_id = $5',
-                        new_expires_at, cost, now.isoformat(), user1_id, user2_id
-                    )
-                    await log_event("marriage_renew", user_id=user1_id, target_user_id=user2_id, amount=cost)
-                    print(f"✅ Брак {user1_id}-{user2_id} автопродлён на {days_to_add} дн. (списано {cost} с общего баланса)")
-                except Exception as e:
-                    print(f"❌ Ошибка автопродления брака {user1_id}-{user2_id}: {e}")
-                continue
-
-            if voice_channel_id:
-                channel = bot.get_channel(voice_channel_id)
-                if channel:
-                    try:
-                        await channel.delete(reason="Автоматическое расторжение брака: закончился общий баланс")
-                    except Exception as e:
-                        print(f"❌ Не удалось удалить голосовой канал брака {user1_id}-{user2_id}: {e}")
-
-            try:
-                await log_event("marriage_expire", user_id=user1_id, target_user_id=user2_id)
-                await cursor.execute('DELETE FROM marriages WHERE user1_id = $1 AND user2_id = $2', user1_id, user2_id)
-                print(f"💔 Брак {user1_id}-{user2_id} автоматически расторгнут: не хватило средств на продление")
+                await _process_marriage_expiration_row(
+                    bot, cursor, now, user1_id, user2_id, marriage_balance,
+                    expires_at_str, voice_channel_id
+                )
             except Exception as e:
-                print(f"❌ Ошибка автоматического расторжения брака {user1_id}-{user2_id}: {e}")
-                continue
-
-            divorce_embed = discord.Embed(
-                description="Ваш брак был автоматически расторгнут: на общем балансе не хватило средств для продления.",
-                color=0x6e6e6e
-            )
-            for uid in (user1_id, user2_id):
-                user_obj = bot.get_user(uid)
-                if user_obj:
-                    try:
-                        await user_obj.send(embed=divorce_embed)
-                    except Exception:
-                        pass
+                # Защита от непредвиденной ошибки, которая иначе вырвалась бы
+                # за пределы всех внутренних try/except — без неё один
+                # проблемный брак мог бы навсегда остановить весь часовой
+                # цикл автопроверки (discord.ext.tasks не перезапускает
+                # задачу автоматически после необработанного исключения).
+                print(f"❌ Непредвиденная ошибка автопроверки брака {user1_id}-{user2_id}: {e!r}")
+                import traceback
+                traceback.print_exc()
 
     @check_marriage_expirations.before_loop
     async def before_check():
         await bot.wait_until_ready()
 
     check_marriage_expirations.start()
+
+
+async def _process_marriage_expiration_row(
+    bot, cursor, now, user1_id, user2_id, marriage_balance, expires_at_str, voice_channel_id
+):
+    try:
+        expires_at = datetime.fromisoformat(expires_at_str)
+    except (TypeError, ValueError):
+        return
+
+    if expires_at > now:
+        return
+
+    affordable_days = (marriage_balance or 0) // MARRIAGE_RENEWAL_DAY_COST
+
+    if affordable_days >= 1:
+        days_to_add = min(affordable_days, MARRIAGE_AUTO_RENEW_MAX_DAYS)
+        cost = days_to_add * MARRIAGE_RENEWAL_DAY_COST
+        new_expires_at = (expires_at + timedelta(days=days_to_add)).isoformat()
+
+        try:
+            await cursor.execute(
+                'UPDATE marriages SET expires_at = $1, marriage_balance = marriage_balance - $2, renewed_at = $3 '
+                'WHERE user1_id = $4 AND user2_id = $5',
+                new_expires_at, cost, now.isoformat(), user1_id, user2_id
+            )
+            await log_event("marriage_renew", user_id=user1_id, target_user_id=user2_id, amount=cost)
+            print(f"✅ Брак {user1_id}-{user2_id} автопродлён на {days_to_add} дн. (списано {cost} с общего баланса)")
+        except Exception as e:
+            print(f"❌ Ошибка автопродления брака {user1_id}-{user2_id}: {e}")
+        return
+
+    if voice_channel_id:
+        channel = bot.get_channel(voice_channel_id)
+        if channel:
+            try:
+                await channel.delete(reason="Автоматическое расторжение брака: закончился общий баланс")
+            except Exception as e:
+                print(f"❌ Не удалось удалить голосовой канал брака {user1_id}-{user2_id}: {e}")
+
+    try:
+        await log_event("marriage_expire", user_id=user1_id, target_user_id=user2_id)
+        await cursor.execute('DELETE FROM marriages WHERE user1_id = $1 AND user2_id = $2', user1_id, user2_id)
+        print(f"💔 Брак {user1_id}-{user2_id} автоматически расторгнут: не хватило средств на продление")
+    except Exception as e:
+        print(f"❌ Ошибка автоматического расторжения брака {user1_id}-{user2_id}: {e}")
+        return
+
+    divorce_embed = discord.Embed(
+        description="Ваш брак был автоматически расторгнут: на общем балансе не хватило средств для продления.",
+        color=0x6e6e6e
+    )
+    for uid in (user1_id, user2_id):
+        user_obj = bot.get_user(uid)
+        if user_obj:
+            try:
+                await user_obj.send(embed=divorce_embed)
+            except Exception:
+                pass
